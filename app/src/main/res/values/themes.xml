@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Faro" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
+        <item name="colorPrimary">#000000</item>
+        <item name="colorPrimaryVariant">#111111</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#1a9e3a</item>
+        <item name="colorOnSecondary">#FFFFFF</item>
+        <item name="android:windowBackground">#111111</item>
+    </style>
+</resources>

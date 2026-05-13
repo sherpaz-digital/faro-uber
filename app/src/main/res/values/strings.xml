@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Faro</string>
+    <string name="accessibility_description">Faro lee las solicitudes de Uber Driver para mostrar la rentabilidad en tiempo real</string>
+    <string name="channel_name">Faro activo</string>
+    <string name="channel_desc">Círculos flotantes sobre Uber Driver</string>
+</resources>
