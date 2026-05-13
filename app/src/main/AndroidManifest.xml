@@ -5,7 +5,6 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -25,7 +24,7 @@
         <service
             android:name=".FloatingService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection|specialUse">
+            android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="overlay"/>
@@ -42,9 +41,5 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
-        <activity
-            android:name=".ScreenCaptureActivity"
-            android:exported="false"
-            android:theme="@android:style/Theme.Translucent.NoTitleBar"/>
     </application>
 </manifest>
