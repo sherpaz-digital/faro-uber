@@ -35,7 +35,7 @@ class FloatingService : Service() {
     private var isAnalyzing = false
 
     companion object {
-        const val CHANNEL_ID   = "faro_channel"
+        const val CHANNEL_ID   = "faro_channel_v2"
         const val NOTIF_ID     = 1
         const val COLOR_IDLE   = 0xFF444444.toInt()
         const val COLOR_RED    = 0xFFe03030.toInt()
@@ -76,13 +76,11 @@ class FloatingService : Service() {
                 isAnalyzing = true
                 setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_YELLOW)
                 overlayView.findViewById<TextView>(R.id.tvHora).text = "..."
-                // Lanzar Activity transparente para capturar pantalla
                 CaptureActivity.start(this)
             }
         }
     }
 
-    // Callback llamado por CaptureActivity cuando tiene el bitmap
     fun onCaptureResult(bitmap: Bitmap?) {
         val prefs = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""
@@ -261,19 +259,36 @@ Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun createNotificationChannel() {
-        val ch = NotificationChannel(CHANNEL_ID, getString(R.string.channel_name),
-            NotificationManager.IMPORTANCE_LOW)
-            .apply { description = getString(R.string.channel_desc) }
+        // IMPORTANCE_MIN — no aparece en la barra de notificaciones
+        // compatible con Samsung sin necesidad de activar notificaciones
+        val ch = NotificationChannel(
+            CHANNEL_ID,
+            "Faro servicio",
+            NotificationManager.IMPORTANCE_MIN
+        ).apply {
+            description = "Servicio en segundo plano"
+            setShowBadge(false)
+            setSound(null, null)
+            enableLights(false)
+            enableVibration(false)
+        }
         getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
     }
 
     private fun buildNotification(): Notification {
-        val pi = PendingIntent.getActivity(this, 0,
-            Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE)
+        val pi = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE
+        )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Faro activo")
             .setContentText("Toca el círculo superior para analizar")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
-            .setContentIntent(pi).setOngoing(true).build()
+            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setOngoing(true)
+            .setSilent(true)
+            .setContentIntent(pi)
+            .build()
     }
 }
