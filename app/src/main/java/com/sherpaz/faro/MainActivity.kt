@@ -18,27 +18,18 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         val prefs = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
-        val etApiKey = findViewById<EditText>(R.id.etApiKey)
         val etUmbral = findViewById<EditText>(R.id.etUmbralHora)
-
-        etApiKey.setText(prefs.getString("api_key", ""))
         etUmbral.setText(prefs.getInt("umbral_hora", 13000).toString())
 
         findViewById<Button>(R.id.btnOverlay).setOnClickListener {
-            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName")))
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName"))
+            )
         }
 
         findViewById<Button>(R.id.btnAccessibility).setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-        }
-
-        findViewById<Button>(R.id.btnSaveKey).setOnClickListener {
-            val key = etApiKey.text.toString().trim()
-            if (key.isNotEmpty()) {
-                prefs.edit().putString("api_key", key).apply()
-                Toast.makeText(this, "API Key guardada", Toast.LENGTH_SHORT).show()
-            }
         }
 
         findViewById<Button>(R.id.btnSaveUmbral).setOnClickListener {
@@ -50,10 +41,6 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.btnStart).setOnClickListener {
             if (!Settings.canDrawOverlays(this)) {
                 Toast.makeText(this, "Activa primero el permiso flotante", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
-            if (prefs.getString("api_key", "").isNullOrEmpty()) {
-                Toast.makeText(this, "Ingresa tu API Key primero", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
             startForegroundService(Intent(this, FloatingService::class.java))
@@ -70,8 +57,10 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         val tvO = findViewById<TextView>(R.id.tvOverlayStatus)
         val tvA = findViewById<TextView>(R.id.tvAccessStatus)
+
         tvO.text = if (Settings.canDrawOverlays(this))
             "Permiso flotante: ACTIVO" else "Permiso flotante: INACTIVO"
+
         val svc = "${packageName}/${UberAccessibilityService::class.java.canonicalName}"
         val enabled = Settings.Secure.getString(
             contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES) ?: ""
