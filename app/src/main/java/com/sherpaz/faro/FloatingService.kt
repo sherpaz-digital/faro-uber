@@ -1,14 +1,16 @@
 package com.sherpaz.faro
 
 import android.app.*
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.util.Base64
-import android.util.Log
 import android.view.*
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -20,6 +22,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.text.NumberFormat
 import java.util.Locale
 
@@ -35,8 +38,19 @@ class FloatingService : Service() {
         .build()
     private var isAnalyzing = false
 
+    private val captureReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val filePath = intent?.getStringExtra(CaptureActivity.EXTRA_FILE_PATH)
+            if (filePath != null) {
+                val bitmap = BitmapFactory.decodeFile(filePath)
+                processBitmap(bitmap)
+            } else {
+                showError("E:BMP")
+            }
+        }
+    }
+
     companion object {
-        const val TAG = "FaroService"
         const val CHANNEL_ID = "faro_channel_v3"
         const val NOTIF_ID = 1
         const val COLOR_IDLE   = 0xFF444444.toInt()
@@ -56,6 +70,10 @@ class FloatingService : Service() {
         startForeground(NOTIF_ID, buildNotification())
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         setupOverlay()
+
+        // Registrar receiver para recibir la captura
+        val filter = IntentFilter(CaptureActivity.ACTION_CAPTURE_DONE)
+        registerReceiver(captureReceiver, filter, RECEIVER_NOT_EXPORTED)
     }
 
     private fun setupOverlay() {
@@ -83,76 +101,66 @@ class FloatingService : Service() {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error en setupOverlay: ${e.message}")
             stopSelf()
         }
     }
 
-    fun onCaptureResult(bitmap: Bitmap?) {
-        Log.d(TAG, "onCaptureResult llamado, bitmap=${bitmap != null}")
-
+    private fun processBitmap(bitmap: Bitmap?) {
         val prefs = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""
 
         if (bitmap == null) {
-            Log.e(TAG, "Bitmap es null — captura falló")
-            scope.launch(Dispatchers.Main) { resetCircles() }
-            isAnalyzing = false
+            showError("E:BMP")
             return
         }
 
         if (apiKey.isEmpty()) {
-            Log.e(TAG, "API key vacía")
-            scope.launch(Dispatchers.Main) { resetCircles() }
-            isAnalyzing = false
+            showError("E:KEY")
             return
         }
-
-        Log.d(TAG, "Enviando imagen ${bitmap.width}x${bitmap.height} a Claude")
 
         scope.launch {
             try {
                 val result = analyzeWithClaude(apiKey, bitmap)
                 withContext(Dispatchers.Main) {
-                    if (result != null) {
-                        Log.d(TAG, "Éxito: $/hora=${result.clpHora} $/km=${result.clpKm}")
-                        updateCircles(result.clpHora, result.clpKm)
-                    } else {
-                        Log.e(TAG, "Resultado null")
-                        resetCircles()
-                    }
+                    if (result != null) updateCircles(result.clpHora, result.clpKm)
+                    else resetCircles()
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Excepción en análisis: ${e.message}")
-                withContext(Dispatchers.Main) { resetCircles() }
+                showError("E:EXC")
             } finally {
-                delay(2000)
+                delay(3000)
                 isAnalyzing = false
             }
         }
     }
 
+    private fun showError(code: String) {
+        scope.launch(Dispatchers.Main) {
+            setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_RED)
+            overlayView.findViewById<TextView>(R.id.tvHora).text = code
+            delay(4000)
+            resetCircles()
+            isAnalyzing = false
+        }
+    }
+
     private suspend fun analyzeWithClaude(apiKey: String, bitmap: Bitmap): TripData? {
-        // Comprimir imagen
         val baos = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, 85, baos)
-        val imageBytes = baos.toByteArray()
-        val imageBase64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
-        Log.d(TAG, "Imagen comprimida: ${imageBytes.size} bytes, base64: ${imageBase64.length} chars")
+        val imageBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
 
         val prompt = """Analiza esta captura de pantalla de Uber Driver en Chile.
-Extrae los datos de la solicitud de viaje visible y devuelve SOLO este JSON:
-{"tarifa":7058,"bono_inicio":1135,"km_buscar":0.8,"min_buscar":3,"km_viaje":15.1,"min_viaje":34}
+Devuelve SOLO este JSON con los datos de la solicitud:
+{"tarifa":0,"bono_inicio":0,"km_buscar":0.0,"min_buscar":0,"km_viaje":0.0,"min_viaje":0}
 
-Campos:
-- tarifa: monto principal en CLP (entero sin puntos)
+- tarifa: monto principal en CLP (entero)
 - bono_inicio: bono adicional en CLP (0 si no hay)
-- km_buscar: km para buscar pasajero (decimal)
-- min_buscar: minutos para buscar (entero)
-- km_viaje: km del viaje (decimal)
-- min_viaje: minutos del viaje (entero)
+- km_buscar: km para buscar pasajero
+- min_buscar: minutos para buscar
+- km_viaje: km del viaje
+- min_viaje: minutos del viaje
 
-Si no hay solicitud visible devuelve: {"tarifa":0,"bono_inicio":0,"km_buscar":0.0,"min_buscar":0,"km_viaje":0.0,"min_viaje":0}
 Solo JSON, sin texto adicional."""
 
         val messageContent = JSONArray().apply {
@@ -179,8 +187,6 @@ Solo JSON, sin texto adicional."""
             }))
         }
 
-        Log.d(TAG, "Enviando request a Claude API...")
-
         val request = Request.Builder()
             .url("https://api.anthropic.com/v1/messages")
             .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
@@ -192,17 +198,15 @@ Solo JSON, sin texto adicional."""
             val resp = client.newCall(request).execute()
             val httpCode = resp.code
             val respBody = resp.body?.string() ?: ""
-            Log.d(TAG, "HTTP $httpCode — Respuesta: $respBody")
 
             if (!resp.isSuccessful) {
-                Log.e(TAG, "Error HTTP $httpCode: $respBody")
+                withContext(Dispatchers.Main) { showError("H:$httpCode") }
                 return null
             }
 
             val json = JSONObject(respBody)
-
             if (json.has("error")) {
-                Log.e(TAG, "Error API Claude: ${json.getJSONObject("error").optString("message")}")
+                withContext(Dispatchers.Main) { showError("API ERR") }
                 return null
             }
 
@@ -211,21 +215,12 @@ Solo JSON, sin texto adicional."""
                 .getString("text")
                 .trim()
 
-            Log.d(TAG, "Texto de Claude: $rawText")
-
-            // Extraer JSON aunque haya texto extra alrededor
             val jsonStart = rawText.indexOf('{')
             val jsonEnd = rawText.lastIndexOf('}')
-            if (jsonStart == -1 || jsonEnd == -1) {
-                Log.e(TAG, "No hay JSON en respuesta: $rawText")
-                return null
-            }
-            val jsonStr = rawText.substring(jsonStart, jsonEnd + 1)
-            Log.d(TAG, "JSON extraído: $jsonStr")
+            if (jsonStart == -1 || jsonEnd == -1) return null
 
-            val data = JSONObject(jsonStr)
+            val data = JSONObject(rawText.substring(jsonStart, jsonEnd + 1))
 
-            // Usar optDouble para manejar cualquier formato numérico
             val tarifa = data.optDouble("tarifa", 0.0).toInt()
             val bono   = data.optDouble("bono_inicio", 0.0).toInt()
             val kmB    = data.optDouble("km_buscar", 0.0)
@@ -233,13 +228,7 @@ Solo JSON, sin texto adicional."""
             val kmV    = data.optDouble("km_viaje", 0.0)
             val minV   = data.optDouble("min_viaje", 0.0).toInt()
 
-            Log.d(TAG, "Datos: tarifa=$tarifa bono=$bono kmB=$kmB minB=$minB kmV=$kmV minV=$minV")
-
-            // Validar que hay datos reales
-            if (tarifa == 0 && kmV == 0.0) {
-                Log.e(TAG, "Datos vacíos — no hay solicitud en la imagen")
-                return null
-            }
+            if (tarifa == 0 && kmV == 0.0) return null
 
             val total    = tarifa + bono
             val totalMin = (minB + minV).toDouble().coerceAtLeast(1.0)
@@ -250,7 +239,7 @@ Solo JSON, sin texto adicional."""
                 clpKm   = (total / totalKm).toInt()
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Excepción parseando respuesta: ${e.message}")
+            withContext(Dispatchers.Main) { showError("E:NET") }
             null
         }
     }
@@ -315,7 +304,10 @@ Solo JSON, sin texto adicional."""
         floatingServiceInstance = null
         UberAccessibilityService.floatingServiceInstance = null
         scope.cancel()
+        try { unregisterReceiver(captureReceiver) } catch (e: Exception) {}
         if (::overlayView.isInitialized) windowManager.removeView(overlayView)
+        // Limpiar archivo temporal
+        try { File(cacheDir, "faro_capture.jpg").delete() } catch (e: Exception) {}
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
