@@ -86,8 +86,8 @@ class UberAccessibilityService : AccessibilityService() {
 
     private fun extractTripData(text: String): TripData? {
         return try {
-            // Tarifa principal — primer CLP seguido de número
-            val tarifaRegex = Regex("""CLP\s*(\d[\d.,]*)""")
+            // Tarifa principal — CLP seguido de número con punto o coma como separador de miles
+            val tarifaRegex = Regex("""CLP\s*(\d{1,3}(?:[.,]\d{3})*)""")
             val tarifaStr = tarifaRegex.find(text)?.groupValues?.get(1) ?: run {
                 floatingServiceInstance?.log("No se encontró tarifa CLP")
                 return null
@@ -95,7 +95,7 @@ class UberAccessibilityService : AccessibilityService() {
             val tarifa = tarifaStr.replace(".", "").replace(",", "").toInt()
 
             // Bono de inicio — +CLP seguido de número (opcional)
-            val bonoRegex = Regex("""\+CLP\s*(\d[\d.,]*)""")
+            val bonoRegex = Regex("""\+CLP\s*(\d{1,3}(?:[.,]\d{3})*)""")
             val bonoStr = bonoRegex.find(text)?.groupValues?.get(1)
             val bono = bonoStr?.replace(".", "")?.replace(",", "")?.toIntOrNull() ?: 0
 
