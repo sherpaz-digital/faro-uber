@@ -35,7 +35,7 @@ class FloatingService : Service() {
     private var isAnalyzing = false
 
     companion object {
-        const val CHANNEL_ID   = "faro_channel_v2"
+        const val CHANNEL_ID   = "faro_channel_v3"
         const val NOTIF_ID     = 1
         const val COLOR_IDLE   = 0xFF444444.toInt()
         const val COLOR_RED    = 0xFFe03030.toInt()
@@ -57,27 +57,31 @@ class FloatingService : Service() {
     }
 
     private fun setupOverlay() {
-        overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_circles, null)
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.END; x = 20; y = 60 }
+        try {
+            overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_circles, null)
+            val params = WindowManager.LayoutParams(
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.WRAP_CONTENT,
+                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
+                PixelFormat.TRANSLUCENT
+            ).apply { gravity = Gravity.TOP or Gravity.END; x = 20; y = 60 }
 
-        windowManager.addView(overlayView, params)
-        makeDraggable(overlayView, params)
-        resetCircles()
+            windowManager.addView(overlayView, params)
+            makeDraggable(overlayView, params)
+            resetCircles()
 
-        overlayView.findViewById<FrameLayout>(R.id.circleHora).setOnClickListener {
-            if (!isAnalyzing) {
-                isAnalyzing = true
-                setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_YELLOW)
-                overlayView.findViewById<TextView>(R.id.tvHora).text = "..."
-                CaptureActivity.start(this)
+            overlayView.findViewById<FrameLayout>(R.id.circleHora).setOnClickListener {
+                if (!isAnalyzing) {
+                    isAnalyzing = true
+                    setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_YELLOW)
+                    overlayView.findViewById<TextView>(R.id.tvHora).text = "..."
+                    CaptureActivity.start(this)
+                }
             }
+        } catch (e: Exception) {
+            stopSelf()
         }
     }
 
@@ -259,14 +263,11 @@ Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun createNotificationChannel() {
-        // IMPORTANCE_MIN — no aparece en la barra de notificaciones
-        // compatible con Samsung sin necesidad de activar notificaciones
         val ch = NotificationChannel(
             CHANNEL_ID,
-            "Faro servicio",
+            "Faro",
             NotificationManager.IMPORTANCE_MIN
         ).apply {
-            description = "Servicio en segundo plano"
             setShowBadge(false)
             setSound(null, null)
             enableLights(false)
