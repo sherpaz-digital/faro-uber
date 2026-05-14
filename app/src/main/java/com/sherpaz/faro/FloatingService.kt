@@ -25,6 +25,7 @@ class FloatingService : Service() {
     private val fmt = NumberFormat.getNumberInstance(Locale("es", "CL"))
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isAnalyzing = false
+    private var resetJob: Job? = null
     private val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
     companion object {
@@ -85,6 +86,8 @@ class FloatingService : Service() {
             overlayView.findViewById<FrameLayout>(R.id.circleHora).setOnClickListener {
                 if (!isAnalyzing) {
                     isAnalyzing = true
+                    // Si había un reset pendiente, cancelarlo
+                    resetJob?.cancel()
                     log("Círculo tocado — iniciando captura OCR")
                     setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_YELLOW)
                     overlayView.findViewById<TextView>(R.id.tvHora).text = "..."
@@ -123,6 +126,14 @@ class FloatingService : Service() {
         setCircleColor(overlayView.findViewById(R.id.circleKm), colorKm(clpKm))
         overlayView.findViewById<TextView>(R.id.tvHora).text = fmt.format(clpHora)
         overlayView.findViewById<TextView>(R.id.tvKm).text = fmt.format(clpKm)
+
+        // Auto-reset después de 5 segundos
+        // Si hay un reset anterior pendiente se cancela y empieza uno nuevo
+        resetJob?.cancel()
+        resetJob = scope.launch(Dispatchers.Main) {
+            delay(5000)
+            resetCircles()
+        }
     }
 
     fun resetCircles() {
@@ -176,6 +187,7 @@ class FloatingService : Service() {
         log("Faro detenido")
         floatingServiceInstance = null
         UberAccessibilityService.floatingServiceInstance = null
+        resetJob?.cancel()
         scope.cancel()
         if (::overlayView.isInitialized) windowManager.removeView(overlayView)
     }
