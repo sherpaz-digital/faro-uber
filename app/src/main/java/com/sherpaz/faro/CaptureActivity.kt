@@ -13,13 +13,15 @@ import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import java.io.File
+import java.io.FileOutputStream
 
 class CaptureActivity : Activity() {
 
     companion object {
-        const val TAG = "CaptureActivity"
         const val REQUEST_CODE = 100
+        const val ACTION_CAPTURE_DONE = "com.sherpaz.faro.CAPTURE_DONE"
+        const val EXTRA_FILE_PATH = "file_path"
 
         fun start(context: Context) {
             val intent = Intent(context, CaptureActivity::class.java).apply {
@@ -35,18 +37,17 @@ class CaptureActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d(TAG, "onCreate — solicitando permiso MediaProjection")
         val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         startActivityForResult(mgr.createScreenCaptureIntent(), REQUEST_CODE)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
-        Log.d(TAG, "onActivityResult: requestCode=$requestCode resultCode=$resultCode")
 
         if (requestCode != REQUEST_CODE || resultCode != RESULT_OK || data == null) {
-            Log.e(TAG, "Permiso denegado o cancelado")
-            FloatingService.floatingServiceInstance?.onCaptureResult(null)
+            sendBroadcast(Intent(ACTION_CAPTURE_DONE).apply {
+                setPackage(packageName)
+            })
             finish()
             return
         }
@@ -60,34 +61,27 @@ class CaptureActivity : Activity() {
         val density = metrics.densityDpi
 
         imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-
         virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "FaroCapture",
-            width, height, density,
+            "FaroCapture", width, height, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader?.surface, null, null
         )
 
-        Log.d(TAG, "VirtualDisplay creado — esperando frame...")
-
-        // Esperar 1.5 segundos para que la pantalla muestre Uber Driver
-        // y recién entonces capturar
         Handler(Looper.getMainLooper()).postDelayed({
-            Log.d(TAG, "Capturando frame...")
-            val bitmap = captureFrame(width, height)
-            Log.d(TAG, "Frame capturado: ${bitmap != null}")
+            val filePath = captureAndSave(width, height)
             cleanup()
-            FloatingService.floatingServiceInstance?.onCaptureResult(bitmap)
+            val intent = Intent(ACTION_CAPTURE_DONE).apply {
+                setPackage(packageName)
+                if (filePath != null) putExtra(EXTRA_FILE_PATH, filePath)
+            }
+            sendBroadcast(intent)
             finish()
         }, 1500)
     }
 
-    private fun captureFrame(width: Int, height: Int): Bitmap? {
+    private fun captureAndSave(width: Int, height: Int): String? {
         return try {
-            val image = imageReader?.acquireLatestImage() ?: run {
-                Log.e(TAG, "acquireLatestImage devolvió null")
-                return null
-            }
+            val image = imageReader?.acquireLatestImage() ?: return null
             val planes = image.planes
             val buffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
@@ -95,27 +89,27 @@ class CaptureActivity : Activity() {
             val rowPadding = rowStride - pixelStride * width
 
             val bmp = Bitmap.createBitmap(
-                width + rowPadding / pixelStride,
-                height,
-                Bitmap.Config.ARGB_8888
+                width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888
             )
             bmp.copyPixelsFromBuffer(buffer)
             image.close()
-            Log.d(TAG, "Bitmap creado: ${bmp.width}x${bmp.height}")
 
-            // Escalar para reducir tamaño
+            // Escalar
             val maxDim = 1080
             val scale = minOf(maxDim.toFloat() / bmp.width, maxDim.toFloat() / bmp.height)
-            if (scale < 1f) {
+            val scaled = if (scale < 1f) {
                 Bitmap.createScaledBitmap(
-                    bmp,
-                    (bmp.width * scale).toInt(),
-                    (bmp.height * scale).toInt(),
-                    true
+                    bmp, (bmp.width * scale).toInt(), (bmp.height * scale).toInt(), true
                 )
             } else bmp
+
+            // Guardar en archivo temporal
+            val file = File(cacheDir, "faro_capture.jpg")
+            FileOutputStream(file).use { out ->
+                scaled.compress(Bitmap.CompressFormat.JPEG, 85, out)
+            }
+            file.absolutePath
         } catch (e: Exception) {
-            Log.e(TAG, "Error capturando frame: ${e.message}")
             null
         }
     }
