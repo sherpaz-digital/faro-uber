@@ -6,10 +6,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
-import android.hardware.display.DisplayManager
-import android.media.ImageReader
-import android.media.projection.MediaProjection
-import android.media.projection.MediaProjectionManager
 import android.os.IBinder
 import android.util.Base64
 import android.view.*
@@ -38,11 +34,6 @@ class FloatingService : Service() {
         .build()
     private var isAnalyzing = false
 
-    // MediaProjection
-    private var mediaProjection: MediaProjection? = null
-    private var imageReader: ImageReader? = null
-    private var virtualDisplay: android.hardware.display.VirtualDisplay? = null
-
     companion object {
         const val CHANNEL_ID   = "faro_channel"
         const val NOTIF_ID     = 1
@@ -51,46 +42,18 @@ class FloatingService : Service() {
         const val COLOR_YELLOW = 0xFFf5d800.toInt()
         const val COLOR_GREEN  = 0xFF1a9e3a.toInt()
         const val COLOR_PURPLE = 0xFF7c2fc8.toInt()
+
         var floatingServiceInstance: FloatingService? = null
     }
 
     override fun onCreate() {
         super.onCreate()
         floatingServiceInstance = this
+        UberAccessibilityService.floatingServiceInstance = this
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification())
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
         setupOverlay()
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // Recibir permiso MediaProjection desde MainActivity
-        val resultCode = intent?.getIntExtra("mp_result_code", Activity.RESULT_CANCELED)
-            ?: Activity.RESULT_CANCELED
-        val data = intent?.getParcelableExtra<Intent>("mp_data")
-
-        if (resultCode == Activity.RESULT_OK && data != null) {
-            val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-            mediaProjection = mgr.getMediaProjection(resultCode, data)
-            setupImageReader()
-        }
-        return START_STICKY
-    }
-
-    private fun setupImageReader() {
-        val metrics = resources.displayMetrics
-        val width = metrics.widthPixels
-        val height = metrics.heightPixels
-        val density = metrics.densityDpi
-
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
-
-        virtualDisplay = mediaProjection?.createVirtualDisplay(
-            "FaroCapture",
-            width, height, density,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            imageReader?.surface, null, null
-        )
     }
 
     private fun setupOverlay() {
@@ -109,27 +72,30 @@ class FloatingService : Service() {
         resetCircles()
 
         overlayView.findViewById<FrameLayout>(R.id.circleHora).setOnClickListener {
-            if (!isAnalyzing) captureAndAnalyze()
+            if (!isAnalyzing) {
+                isAnalyzing = true
+                setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_YELLOW)
+                overlayView.findViewById<TextView>(R.id.tvHora).text = "..."
+                // Lanzar Activity transparente para capturar pantalla
+                CaptureActivity.start(this)
+            }
         }
     }
 
-    private fun captureAndAnalyze() {
+    // Callback llamado por CaptureActivity cuando tiene el bitmap
+    fun onCaptureResult(bitmap: Bitmap?) {
         val prefs = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
-        val apiKey = prefs.getString("api_key", "") ?: return
-        if (apiKey.isEmpty()) return
+        val apiKey = prefs.getString("api_key", "") ?: ""
 
-        isAnalyzing = true
-        setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_YELLOW)
-        overlayView.findViewById<TextView>(R.id.tvHora).text = "..."
+        if (bitmap == null || apiKey.isEmpty()) {
+            scope.launch(Dispatchers.Main) { resetCircles() }
+            isAnalyzing = false
+            return
+        }
 
         scope.launch {
             try {
-                val bitmap = captureScreen()
-                val result = if (bitmap != null) {
-                    analyzeWithClaude(apiKey, bitmap)
-                } else {
-                    null
-                }
+                val result = analyzeWithClaude(apiKey, bitmap)
                 withContext(Dispatchers.Main) {
                     if (result != null) updateCircles(result.clpHora, result.clpKm)
                     else resetCircles()
@@ -143,41 +109,7 @@ class FloatingService : Service() {
         }
     }
 
-    private fun captureScreen(): Bitmap? {
-        return try {
-            val image = imageReader?.acquireLatestImage() ?: return null
-            val planes = image.planes
-            val buffer = planes[0].buffer
-            val pixelStride = planes[0].pixelStride
-            val rowStride = planes[0].rowStride
-            val rowPadding = rowStride - pixelStride * image.width
-
-            val bitmap = Bitmap.createBitmap(
-                image.width + rowPadding / pixelStride,
-                image.height,
-                Bitmap.Config.ARGB_8888
-            )
-            bitmap.copyPixelsFromBuffer(buffer)
-            image.close()
-
-            // Escalar la imagen para reducir tamaño antes de enviar a Claude
-            val maxDim = 1024
-            val scale = minOf(maxDim.toFloat() / bitmap.width, maxDim.toFloat() / bitmap.height)
-            if (scale < 1f) {
-                Bitmap.createScaledBitmap(
-                    bitmap,
-                    (bitmap.width * scale).toInt(),
-                    (bitmap.height * scale).toInt(),
-                    true
-                )
-            } else bitmap
-        } catch (e: Exception) {
-            null
-        }
-    }
-
     private suspend fun analyzeWithClaude(apiKey: String, bitmap: Bitmap): TripData? {
-        // Convertir bitmap a base64
         val baos = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
         val imageBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
@@ -232,8 +164,6 @@ Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
             val resp = client.newCall(request).execute()
             val respBody = resp.body?.string() ?: return null
             val json = JSONObject(respBody)
-
-            // Manejar errores de API
             if (json.has("error")) return null
 
             val text = json.getJSONArray("content")
@@ -323,10 +253,8 @@ Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
     override fun onDestroy() {
         super.onDestroy()
         floatingServiceInstance = null
+        UberAccessibilityService.floatingServiceInstance = null
         scope.cancel()
-        virtualDisplay?.release()
-        mediaProjection?.stop()
-        imageReader?.close()
         if (::overlayView.isInitialized) windowManager.removeView(overlayView)
     }
 
@@ -349,4 +277,3 @@ Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
             .setContentIntent(pi).setOngoing(true).build()
     }
 }
-
