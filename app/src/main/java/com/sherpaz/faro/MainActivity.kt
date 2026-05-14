@@ -1,9 +1,7 @@
 package com.sherpaz.faro
 
-import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
@@ -14,10 +12,6 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
-
-    companion object {
-        const val REQUEST_MEDIA_PROJECTION = 1001
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,36 +56,13 @@ class MainActivity : AppCompatActivity() {
                 Toast.makeText(this, "Ingresa tu API Key primero", Toast.LENGTH_LONG).show()
                 return@setOnClickListener
             }
-            // Solicitar permiso MediaProjection antes de iniciar el servicio
-            requestMediaProjectionPermission()
+            startForegroundService(Intent(this, FloatingService::class.java))
+            Toast.makeText(this, "Faro iniciado", Toast.LENGTH_SHORT).show()
         }
 
         findViewById<Button>(R.id.btnStop).setOnClickListener {
             stopService(Intent(this, FloatingService::class.java))
             Toast.makeText(this, "Faro detenido", Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun requestMediaProjectionPermission() {
-        val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        startActivityForResult(mgr.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION)
-    }
-
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        if (requestCode == REQUEST_MEDIA_PROJECTION) {
-            if (resultCode == Activity.RESULT_OK && data != null) {
-                // Guardar resultCode y data en prefs no es posible directamente.
-                // Los pasamos al servicio via Intent.
-                val intent = Intent(this, FloatingService::class.java).apply {
-                    putExtra("mp_result_code", resultCode)
-                    putExtra("mp_data", data)
-                }
-                startForegroundService(intent)
-                Toast.makeText(this, "Faro iniciado", Toast.LENGTH_SHORT).show()
-            } else {
-                Toast.makeText(this, "Permiso de captura denegado", Toast.LENGTH_LONG).show()
-            }
         }
     }
 
