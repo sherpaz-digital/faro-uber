@@ -9,6 +9,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.Environment
 import android.os.IBinder
 import android.util.Base64
 import android.view.*
@@ -23,7 +24,10 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileWriter
 import java.text.NumberFormat
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 class FloatingService : Service() {
@@ -37,14 +41,19 @@ class FloatingService : Service() {
         .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
         .build()
     private var isAnalyzing = false
+    private val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
 
     private val captureReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            log("BROADCAST recibido")
             val filePath = intent?.getStringExtra(CaptureActivity.EXTRA_FILE_PATH)
             if (filePath != null) {
+                log("Archivo recibido: $filePath")
                 val bitmap = BitmapFactory.decodeFile(filePath)
+                log("Bitmap decodificado: ${bitmap != null} — ${bitmap?.width}x${bitmap?.height}")
                 processBitmap(bitmap)
             } else {
+                log("ERROR: filePath es null")
                 showError("E:BMP")
             }
         }
@@ -62,6 +71,16 @@ class FloatingService : Service() {
         var floatingServiceInstance: FloatingService? = null
     }
 
+    private fun log(msg: String) {
+        try {
+            val logFile = File(getExternalFilesDir(null), "faro_log.txt")
+            val time = dateFormat.format(Date())
+            FileWriter(logFile, true).use { it.write("[$time] $msg\n") }
+        } catch (e: Exception) {
+            // silencioso
+        }
+    }
+
     override fun onCreate() {
         super.onCreate()
         floatingServiceInstance = this
@@ -69,11 +88,12 @@ class FloatingService : Service() {
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification())
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        log("=== Faro iniciado ===")
         setupOverlay()
 
-        // Registrar receiver para recibir la captura
         val filter = IntentFilter(CaptureActivity.ACTION_CAPTURE_DONE)
         registerReceiver(captureReceiver, filter, RECEIVER_NOT_EXPORTED)
+        log("Receiver registrado")
     }
 
     private fun setupOverlay() {
@@ -91,16 +111,19 @@ class FloatingService : Service() {
             windowManager.addView(overlayView, params)
             makeDraggable(overlayView, params)
             resetCircles()
+            log("Overlay creado OK")
 
             overlayView.findViewById<FrameLayout>(R.id.circleHora).setOnClickListener {
                 if (!isAnalyzing) {
                     isAnalyzing = true
+                    log("Círculo tocado — iniciando captura")
                     setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_YELLOW)
                     overlayView.findViewById<TextView>(R.id.tvHora).text = "..."
                     CaptureActivity.start(this)
                 }
             }
         } catch (e: Exception) {
+            log("ERROR en setupOverlay: ${e.message}")
             stopSelf()
         }
     }
@@ -108,25 +131,35 @@ class FloatingService : Service() {
     private fun processBitmap(bitmap: Bitmap?) {
         val prefs = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""
+        log("API key length: ${apiKey.length}")
 
         if (bitmap == null) {
+            log("ERROR: bitmap null")
             showError("E:BMP")
             return
         }
 
         if (apiKey.isEmpty()) {
+            log("ERROR: API key vacía")
             showError("E:KEY")
             return
         }
 
         scope.launch {
             try {
+                log("Llamando a Claude API...")
                 val result = analyzeWithClaude(apiKey, bitmap)
                 withContext(Dispatchers.Main) {
-                    if (result != null) updateCircles(result.clpHora, result.clpKm)
-                    else resetCircles()
+                    if (result != null) {
+                        log("Resultado OK: hora=${result.clpHora} km=${result.clpKm}")
+                        updateCircles(result.clpHora, result.clpKm)
+                    } else {
+                        log("Resultado null — sin datos")
+                        resetCircles()
+                    }
                 }
             } catch (e: Exception) {
+                log("EXCEPCIÓN: ${e.message}")
                 showError("E:EXC")
             } finally {
                 delay(3000)
@@ -148,7 +181,9 @@ class FloatingService : Service() {
     private suspend fun analyzeWithClaude(apiKey: String, bitmap: Bitmap): TripData? {
         val baos = ByteArrayOutputStream()
         bitmap.compress(Bitmap.CompressFormat.JPEG, 85, baos)
-        val imageBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        val imageBytes = baos.toByteArray()
+        val imageBase64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
+        log("Imagen: ${imageBytes.size} bytes")
 
         val prompt = """Analiza esta captura de pantalla de Uber Driver en Chile.
 Devuelve SOLO este JSON con los datos de la solicitud:
@@ -195,9 +230,11 @@ Solo JSON, sin texto adicional."""
             .build()
 
         return try {
+            log("Ejecutando request HTTP...")
             val resp = client.newCall(request).execute()
             val httpCode = resp.code
             val respBody = resp.body?.string() ?: ""
+            log("HTTP $httpCode — respuesta: ${respBody.take(200)}")
 
             if (!resp.isSuccessful) {
                 withContext(Dispatchers.Main) { showError("H:$httpCode") }
@@ -206,6 +243,7 @@ Solo JSON, sin texto adicional."""
 
             val json = JSONObject(respBody)
             if (json.has("error")) {
+                log("Error API: ${json.getJSONObject("error").optString("message")}")
                 withContext(Dispatchers.Main) { showError("API ERR") }
                 return null
             }
@@ -214,13 +252,16 @@ Solo JSON, sin texto adicional."""
                 .getJSONObject(0)
                 .getString("text")
                 .trim()
+            log("Texto Claude: $rawText")
 
             val jsonStart = rawText.indexOf('{')
             val jsonEnd = rawText.lastIndexOf('}')
-            if (jsonStart == -1 || jsonEnd == -1) return null
+            if (jsonStart == -1 || jsonEnd == -1) {
+                log("No hay JSON en respuesta")
+                return null
+            }
 
             val data = JSONObject(rawText.substring(jsonStart, jsonEnd + 1))
-
             val tarifa = data.optDouble("tarifa", 0.0).toInt()
             val bono   = data.optDouble("bono_inicio", 0.0).toInt()
             val kmB    = data.optDouble("km_buscar", 0.0)
@@ -228,7 +269,12 @@ Solo JSON, sin texto adicional."""
             val kmV    = data.optDouble("km_viaje", 0.0)
             val minV   = data.optDouble("min_viaje", 0.0).toInt()
 
-            if (tarifa == 0 && kmV == 0.0) return null
+            log("Datos: tarifa=$tarifa bono=$bono kmB=$kmB minB=$minB kmV=$kmV minV=$minV")
+
+            if (tarifa == 0 && kmV == 0.0) {
+                log("Datos vacíos")
+                return null
+            }
 
             val total    = tarifa + bono
             val totalMin = (minB + minV).toDouble().coerceAtLeast(1.0)
@@ -239,6 +285,7 @@ Solo JSON, sin texto adicional."""
                 clpKm   = (total / totalKm).toInt()
             )
         } catch (e: Exception) {
+            log("EXCEPCIÓN HTTP: ${e.message}")
             withContext(Dispatchers.Main) { showError("E:NET") }
             null
         }
@@ -301,12 +348,12 @@ Solo JSON, sin texto adicional."""
 
     override fun onDestroy() {
         super.onDestroy()
+        log("Faro detenido")
         floatingServiceInstance = null
         UberAccessibilityService.floatingServiceInstance = null
         scope.cancel()
         try { unregisterReceiver(captureReceiver) } catch (e: Exception) {}
         if (::overlayView.isInitialized) windowManager.removeView(overlayView)
-        // Limpiar archivo temporal
         try { File(cacheDir, "faro_capture.jpg").delete() } catch (e: Exception) {}
     }
 
