@@ -73,7 +73,10 @@ class FloatingService : Service() {
 
     private fun log(msg: String) {
         try {
-            val logFile = File(getExternalFilesDir(null), "faro_log.txt")
+            val logFile = File(
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                "faro_log.txt"
+            )
             val time = dateFormat.format(Date())
             FileWriter(logFile, true).use { it.write("[$time] $msg\n") }
         } catch (e: Exception) {
@@ -234,7 +237,7 @@ Solo JSON, sin texto adicional."""
             val resp = client.newCall(request).execute()
             val httpCode = resp.code
             val respBody = resp.body?.string() ?: ""
-            log("HTTP $httpCode — respuesta: ${respBody.take(200)}")
+            log("HTTP $httpCode — respuesta: ${respBody.take(300)}")
 
             if (!resp.isSuccessful) {
                 withContext(Dispatchers.Main) { showError("H:$httpCode") }
@@ -272,7 +275,7 @@ Solo JSON, sin texto adicional."""
             log("Datos: tarifa=$tarifa bono=$bono kmB=$kmB minB=$minB kmV=$kmV minV=$minV")
 
             if (tarifa == 0 && kmV == 0.0) {
-                log("Datos vacíos")
+                log("Datos vacíos — no hay solicitud en imagen")
                 return null
             }
 
