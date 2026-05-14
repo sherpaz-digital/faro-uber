@@ -13,12 +13,12 @@ import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.util.Base64
-import java.io.ByteArrayOutputStream
+import android.util.Log
 
 class CaptureActivity : Activity() {
 
     companion object {
+        const val TAG = "CaptureActivity"
         const val REQUEST_CODE = 100
 
         fun start(context: Context) {
@@ -35,15 +35,17 @@ class CaptureActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Activity completamente transparente — el usuario no la ve
+        Log.d(TAG, "onCreate — solicitando permiso MediaProjection")
         val mgr = getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         startActivityForResult(mgr.createScreenCaptureIntent(), REQUEST_CODE)
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        Log.d(TAG, "onActivityResult: requestCode=$requestCode resultCode=$resultCode")
 
         if (requestCode != REQUEST_CODE || resultCode != RESULT_OK || data == null) {
+            Log.e(TAG, "Permiso denegado o cancelado")
             FloatingService.floatingServiceInstance?.onCaptureResult(null)
             finish()
             return
@@ -66,18 +68,26 @@ class CaptureActivity : Activity() {
             imageReader?.surface, null, null
         )
 
-        // Esperar un frame para que el VirtualDisplay capture la pantalla actual
+        Log.d(TAG, "VirtualDisplay creado — esperando frame...")
+
+        // Esperar 1.5 segundos para que la pantalla muestre Uber Driver
+        // y recién entonces capturar
         Handler(Looper.getMainLooper()).postDelayed({
+            Log.d(TAG, "Capturando frame...")
             val bitmap = captureFrame(width, height)
+            Log.d(TAG, "Frame capturado: ${bitmap != null}")
             cleanup()
             FloatingService.floatingServiceInstance?.onCaptureResult(bitmap)
             finish()
-        }, 300)
+        }, 1500)
     }
 
     private fun captureFrame(width: Int, height: Int): Bitmap? {
         return try {
-            val image = imageReader?.acquireLatestImage() ?: return null
+            val image = imageReader?.acquireLatestImage() ?: run {
+                Log.e(TAG, "acquireLatestImage devolvió null")
+                return null
+            }
             val planes = image.planes
             val buffer = planes[0].buffer
             val pixelStride = planes[0].pixelStride
@@ -91,8 +101,9 @@ class CaptureActivity : Activity() {
             )
             bmp.copyPixelsFromBuffer(buffer)
             image.close()
+            Log.d(TAG, "Bitmap creado: ${bmp.width}x${bmp.height}")
 
-            // Escalar para reducir tamaño antes de enviar a Claude
+            // Escalar para reducir tamaño
             val maxDim = 1080
             val scale = minOf(maxDim.toFloat() / bmp.width, maxDim.toFloat() / bmp.height)
             if (scale < 1f) {
@@ -104,6 +115,7 @@ class CaptureActivity : Activity() {
                 )
             } else bmp
         } catch (e: Exception) {
+            Log.e(TAG, "Error capturando frame: ${e.message}")
             null
         }
     }
