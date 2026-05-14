@@ -127,11 +127,11 @@ class FloatingService : Service() {
         overlayView.findViewById<TextView>(R.id.tvHora).text = fmt.format(clpHora)
         overlayView.findViewById<TextView>(R.id.tvKm).text = fmt.format(clpKm)
 
-        // Auto-reset después de 5 segundos
+        // Auto-reset después de 7 segundos
         // Si hay un reset anterior pendiente se cancela y empieza uno nuevo
         resetJob?.cancel()
         resetJob = scope.launch(Dispatchers.Main) {
-            delay(5000)
+            delay(7000)
             resetCircles()
         }
     }
