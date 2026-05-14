@@ -34,6 +34,7 @@ class CaptureActivity : Activity() {
     private var mediaProjection: MediaProjection? = null
     private var imageReader: ImageReader? = null
     private var virtualDisplay: VirtualDisplay? = null
+    private val handler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,9 +46,7 @@ class CaptureActivity : Activity() {
         super.onActivityResult(requestCode, resultCode, data)
 
         if (requestCode != REQUEST_CODE || resultCode != RESULT_OK || data == null) {
-            sendBroadcast(Intent(ACTION_CAPTURE_DONE).apply {
-                setPackage(packageName)
-            })
+            sendBroadcast(Intent(ACTION_CAPTURE_DONE).apply { setPackage(packageName) })
             finish()
             return
         }
@@ -60,23 +59,41 @@ class CaptureActivity : Activity() {
         val height = metrics.heightPixels
         val density = metrics.densityDpi
 
-        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 2)
+        imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3)
         virtualDisplay = mediaProjection?.createVirtualDisplay(
             "FaroCapture", width, height, density,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             imageReader?.surface, null, null
         )
 
-        Handler(Looper.getMainLooper()).postDelayed({
-            val filePath = captureAndSave(width, height)
+        // Esperar 3 segundos para que el VirtualDisplay capture la pantalla
+        handler.postDelayed({
+            attemptCapture(width, height, retries = 5)
+        }, 3000)
+    }
+
+    private fun attemptCapture(width: Int, height: Int, retries: Int) {
+        val filePath = captureAndSave(width, height)
+        if (filePath != null) {
+            // Captura exitosa
             cleanup()
             val intent = Intent(ACTION_CAPTURE_DONE).apply {
                 setPackage(packageName)
-                if (filePath != null) putExtra(EXTRA_FILE_PATH, filePath)
+                putExtra(EXTRA_FILE_PATH, filePath)
             }
             sendBroadcast(intent)
             finish()
-        }, 1500)
+        } else if (retries > 0) {
+            // Reintentar en 500ms
+            handler.postDelayed({
+                attemptCapture(width, height, retries - 1)
+            }, 500)
+        } else {
+            // Sin más reintentos — enviar broadcast sin archivo
+            cleanup()
+            sendBroadcast(Intent(ACTION_CAPTURE_DONE).apply { setPackage(packageName) })
+            finish()
+        }
     }
 
     private fun captureAndSave(width: Int, height: Int): String? {
@@ -103,7 +120,7 @@ class CaptureActivity : Activity() {
                 )
             } else bmp
 
-            // Guardar en archivo temporal
+            // Guardar en Descargas para que sea accesible
             val file = File(cacheDir, "faro_capture.jpg")
             FileOutputStream(file).use { out ->
                 scaled.compress(Bitmap.CompressFormat.JPEG, 85, out)
@@ -122,6 +139,7 @@ class CaptureActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        handler.removeCallbacksAndMessages(null)
         cleanup()
     }
 }
