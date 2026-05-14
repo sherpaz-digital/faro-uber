@@ -8,6 +8,7 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.util.Base64
+import android.util.Log
 import android.view.*
 import android.widget.FrameLayout
 import android.widget.TextView
@@ -35,8 +36,9 @@ class FloatingService : Service() {
     private var isAnalyzing = false
 
     companion object {
-        const val CHANNEL_ID   = "faro_channel_v3"
-        const val NOTIF_ID     = 1
+        const val TAG = "FaroService"
+        const val CHANNEL_ID = "faro_channel_v3"
+        const val NOTIF_ID = 1
         const val COLOR_IDLE   = 0xFF444444.toInt()
         const val COLOR_RED    = 0xFFe03030.toInt()
         const val COLOR_YELLOW = 0xFFf5d800.toInt()
@@ -81,28 +83,47 @@ class FloatingService : Service() {
                 }
             }
         } catch (e: Exception) {
+            Log.e(TAG, "Error en setupOverlay: ${e.message}")
             stopSelf()
         }
     }
 
     fun onCaptureResult(bitmap: Bitmap?) {
+        Log.d(TAG, "onCaptureResult llamado, bitmap=${bitmap != null}")
+
         val prefs = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
         val apiKey = prefs.getString("api_key", "") ?: ""
 
-        if (bitmap == null || apiKey.isEmpty()) {
+        if (bitmap == null) {
+            Log.e(TAG, "Bitmap es null — captura falló")
             scope.launch(Dispatchers.Main) { resetCircles() }
             isAnalyzing = false
             return
         }
 
+        if (apiKey.isEmpty()) {
+            Log.e(TAG, "API key vacía")
+            scope.launch(Dispatchers.Main) { resetCircles() }
+            isAnalyzing = false
+            return
+        }
+
+        Log.d(TAG, "Enviando imagen ${bitmap.width}x${bitmap.height} a Claude")
+
         scope.launch {
             try {
                 val result = analyzeWithClaude(apiKey, bitmap)
                 withContext(Dispatchers.Main) {
-                    if (result != null) updateCircles(result.clpHora, result.clpKm)
-                    else resetCircles()
+                    if (result != null) {
+                        Log.d(TAG, "Éxito: $/hora=${result.clpHora} $/km=${result.clpKm}")
+                        updateCircles(result.clpHora, result.clpKm)
+                    } else {
+                        Log.e(TAG, "Resultado null")
+                        resetCircles()
+                    }
                 }
             } catch (e: Exception) {
+                Log.e(TAG, "Excepción en análisis: ${e.message}")
                 withContext(Dispatchers.Main) { resetCircles() }
             } finally {
                 delay(2000)
@@ -112,24 +133,27 @@ class FloatingService : Service() {
     }
 
     private suspend fun analyzeWithClaude(apiKey: String, bitmap: Bitmap): TripData? {
+        // Comprimir imagen
         val baos = ByteArrayOutputStream()
-        bitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
-        val imageBase64 = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
+        bitmap.compress(Bitmap.CompressFormat.JPEG, 85, baos)
+        val imageBytes = baos.toByteArray()
+        val imageBase64 = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
+        Log.d(TAG, "Imagen comprimida: ${imageBytes.size} bytes, base64: ${imageBase64.length} chars")
 
-        val prompt = """Eres un asistente para un conductor de Uber en Chile.
-Analiza esta captura de pantalla de Uber Driver y extrae los datos de la solicitud de viaje.
-Responde ÚNICAMENTE con un JSON válido, sin texto adicional, sin explicaciones, sin bloques de código.
-Formato exacto:
-{"tarifa":0,"bono_inicio":0,"km_buscar":0.0,"min_buscar":0,"km_viaje":0.0,"min_viaje":0}
+        val prompt = """Analiza esta captura de pantalla de Uber Driver en Chile.
+Extrae los datos de la solicitud de viaje visible y devuelve SOLO este JSON:
+{"tarifa":7058,"bono_inicio":1135,"km_buscar":0.8,"min_buscar":3,"km_viaje":15.1,"min_viaje":34}
 
-- tarifa: monto en CLP del viaje (número entero)
-- bono_inicio: bono adicional si existe (0 si no hay)
-- km_buscar: kilómetros para ir a buscar al pasajero
-- min_buscar: minutos estimados para ir a buscar
-- km_viaje: kilómetros del viaje
-- min_viaje: minutos estimados del viaje
+Campos:
+- tarifa: monto principal en CLP (entero sin puntos)
+- bono_inicio: bono adicional en CLP (0 si no hay)
+- km_buscar: km para buscar pasajero (decimal)
+- min_buscar: minutos para buscar (entero)
+- km_viaje: km del viaje (decimal)
+- min_viaje: minutos del viaje (entero)
 
-Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
+Si no hay solicitud visible devuelve: {"tarifa":0,"bono_inicio":0,"km_buscar":0.0,"min_buscar":0,"km_viaje":0.0,"min_viaje":0}
+Solo JSON, sin texto adicional."""
 
         val messageContent = JSONArray().apply {
             put(JSONObject().apply {
@@ -146,7 +170,7 @@ Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
             })
         }
 
-        val body = JSONObject().apply {
+        val requestBody = JSONObject().apply {
             put("model", "claude-haiku-4-5-20251001")
             put("max_tokens", 200)
             put("messages", JSONArray().put(JSONObject().apply {
@@ -155,46 +179,78 @@ Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
             }))
         }
 
+        Log.d(TAG, "Enviando request a Claude API...")
+
         val request = Request.Builder()
             .url("https://api.anthropic.com/v1/messages")
-            .post(body.toString().toRequestBody("application/json".toMediaType()))
+            .post(requestBody.toString().toRequestBody("application/json".toMediaType()))
             .addHeader("x-api-key", apiKey)
             .addHeader("anthropic-version", "2023-06-01")
             .build()
 
         return try {
             val resp = client.newCall(request).execute()
-            val respBody = resp.body?.string() ?: return null
-            val json = JSONObject(respBody)
-            if (json.has("error")) return null
+            val httpCode = resp.code
+            val respBody = resp.body?.string() ?: ""
+            Log.d(TAG, "HTTP $httpCode — Respuesta: $respBody")
 
-            val text = json.getJSONArray("content")
+            if (!resp.isSuccessful) {
+                Log.e(TAG, "Error HTTP $httpCode: $respBody")
+                return null
+            }
+
+            val json = JSONObject(respBody)
+
+            if (json.has("error")) {
+                Log.e(TAG, "Error API Claude: ${json.getJSONObject("error").optString("message")}")
+                return null
+            }
+
+            val rawText = json.getJSONArray("content")
                 .getJSONObject(0)
                 .getString("text")
                 .trim()
-                .removePrefix("```json")
-                .removeSuffix("```")
-                .trim()
 
-            val data = JSONObject(text)
-            val tarifa = data.optInt("tarifa", 0)
-            val bono = data.optInt("bono_inicio", 0)
-            val kmB = data.optDouble("km_buscar", 0.0)
-            val minB = data.optInt("min_buscar", 0)
-            val kmV = data.optDouble("km_viaje", 0.0)
-            val minV = data.optInt("min_viaje", 0)
+            Log.d(TAG, "Texto de Claude: $rawText")
 
-            if (tarifa == 0 || kmV == 0.0 || minV == 0) return null
+            // Extraer JSON aunque haya texto extra alrededor
+            val jsonStart = rawText.indexOf('{')
+            val jsonEnd = rawText.lastIndexOf('}')
+            if (jsonStart == -1 || jsonEnd == -1) {
+                Log.e(TAG, "No hay JSON en respuesta: $rawText")
+                return null
+            }
+            val jsonStr = rawText.substring(jsonStart, jsonEnd + 1)
+            Log.d(TAG, "JSON extraído: $jsonStr")
 
-            val total = tarifa + bono
-            val totalMin = (minB + minV).toDouble()
-            val totalKm = kmB + kmV
+            val data = JSONObject(jsonStr)
+
+            // Usar optDouble para manejar cualquier formato numérico
+            val tarifa = data.optDouble("tarifa", 0.0).toInt()
+            val bono   = data.optDouble("bono_inicio", 0.0).toInt()
+            val kmB    = data.optDouble("km_buscar", 0.0)
+            val minB   = data.optDouble("min_buscar", 0.0).toInt()
+            val kmV    = data.optDouble("km_viaje", 0.0)
+            val minV   = data.optDouble("min_viaje", 0.0).toInt()
+
+            Log.d(TAG, "Datos: tarifa=$tarifa bono=$bono kmB=$kmB minB=$minB kmV=$kmV minV=$minV")
+
+            // Validar que hay datos reales
+            if (tarifa == 0 && kmV == 0.0) {
+                Log.e(TAG, "Datos vacíos — no hay solicitud en la imagen")
+                return null
+            }
+
+            val total    = tarifa + bono
+            val totalMin = (minB + minV).toDouble().coerceAtLeast(1.0)
+            val totalKm  = (kmB + kmV).coerceAtLeast(0.1)
 
             TripData(
                 clpHora = ((total / totalMin) * 60).toInt(),
-                clpKm = (total / totalKm).toInt()
+                clpKm   = (total / totalKm).toInt()
             )
         } catch (e: Exception) {
+            Log.e(TAG, "Excepción parseando respuesta: ${e.message}")
             null
         }
     }
@@ -227,21 +283,23 @@ Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
         v >= u + 4000 -> COLOR_PURPLE
         v >= u + 2000 -> COLOR_GREEN
         v >= u - 2000 -> COLOR_YELLOW
-        else -> COLOR_RED
+        else          -> COLOR_RED
     }
 
     private fun colorKm(v: Int) = when {
         v >= 600 -> COLOR_PURPLE
         v >= 500 -> COLOR_GREEN
         v >= 200 -> COLOR_YELLOW
-        else -> COLOR_RED
+        else     -> COLOR_RED
     }
 
     private fun makeDraggable(view: View, params: WindowManager.LayoutParams) {
         var sx = 0f; var sy = 0f; var px = 0; var py = 0
         view.setOnTouchListener { _, e ->
             when (e.action) {
-                MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; px = params.x; py = params.y; true }
+                MotionEvent.ACTION_DOWN -> {
+                    sx = e.rawX; sy = e.rawY; px = params.x; py = params.y; true
+                }
                 MotionEvent.ACTION_MOVE -> {
                     params.x = px - (e.rawX - sx).toInt()
                     params.y = py + (e.rawY - sy).toInt()
@@ -264,9 +322,7 @@ Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
 
     private fun createNotificationChannel() {
         val ch = NotificationChannel(
-            CHANNEL_ID,
-            "Faro",
-            NotificationManager.IMPORTANCE_MIN
+            CHANNEL_ID, "Faro", NotificationManager.IMPORTANCE_MIN
         ).apply {
             setShowBadge(false)
             setSound(null, null)
