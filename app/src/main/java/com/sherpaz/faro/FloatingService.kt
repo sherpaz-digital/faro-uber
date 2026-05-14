@@ -350,4 +350,3 @@ Si no ves una solicitud de viaje activa, devuelve todos los valores en 0."""
     }
 }
 
-data class TripData(val clpHora: Int, val clpKm: Int)
