@@ -1,5 +1,6 @@
 package com.sherpaz.faro
 
+import android.animation.Animator
 import android.animation.ValueAnimator
 import android.app.*
 import android.content.Context
@@ -127,7 +128,6 @@ class FloatingService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!isDragging) {
-                        // Detectar qué círculo fue tocado
                         val circleHora = view.findViewById<FrameLayout>(R.id.circleHora)
                         val circleKm = view.findViewById<FrameLayout>(R.id.circleKm)
                         val loc = IntArray(2)
@@ -146,7 +146,6 @@ class FloatingService : Service() {
 
                         when {
                             tx in horaLeft..horaRight && ty in horaTop..horaBottom -> {
-                                // Toque círculo superior
                                 if (!isAnalyzing) {
                                     isAnalyzing = true
                                     resetJob?.cancel()
@@ -164,7 +163,6 @@ class FloatingService : Service() {
                                 }
                             }
                             tx in kmLeft..kmRight && ty in kmTop..kmBottom -> {
-                                // Toque círculo inferior — detectar doble toque
                                 val now = System.currentTimeMillis()
                                 if (now - lastClickKm < 400) {
                                     toggleSize()
@@ -214,10 +212,14 @@ class FloatingService : Service() {
                 setStroke(stroke, COLOR_WHITE)
             }
         }
-        animator.doOnEnd {
-            // Restaurar color original después de la animación
-            setCircleColor(circle, restoreColor)
-        }
+        animator.addListener(object : Animator.AnimatorListener {
+            override fun onAnimationEnd(a: Animator) {
+                setCircleColor(circle, restoreColor)
+            }
+            override fun onAnimationStart(a: Animator) {}
+            override fun onAnimationCancel(a: Animator) {}
+            override fun onAnimationRepeat(a: Animator) {}
+        })
         animator.start()
     }
 
