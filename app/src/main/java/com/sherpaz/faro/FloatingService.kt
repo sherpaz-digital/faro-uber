@@ -32,6 +32,8 @@ class FloatingService : Service() {
     private var isSmall = false
     private val normalSize = 110
     private val smallSize = 77
+    private var currentColorHora = COLOR_IDLE
+    private var currentColorKm = COLOR_IDLE
 
     companion object {
         const val CHANNEL_ID = "faro_channel_v3"
@@ -86,44 +88,10 @@ class FloatingService : Service() {
             ).apply { gravity = Gravity.TOP or Gravity.END; x = 20; y = 60 }
 
             windowManager.addView(overlayView, params)
-            makeDraggable(overlayView, params)
             resetCircles()
             log("Overlay creado OK")
 
-            // Toque círculo superior — captura y análisis
-            overlayView.findViewById<FrameLayout>(R.id.circleHora).setOnClickListener {
-                if (!isAnalyzing) {
-                    isAnalyzing = true
-                    resetJob?.cancel()
-                    log("Círculo tocado — iniciando captura OCR")
-                    animateTouchGlow(overlayView.findViewById(R.id.circleHora))
-                    overlayView.findViewById<TextView>(R.id.tvHora).text = "..."
-                    overlayView.findViewById<TextView>(R.id.tvMinutos).text = ""
-                    val accessService = UberAccessibilityService.currentInstance
-                    if (accessService != null) {
-                        accessService.captureAndAnalyze()
-                    } else {
-                        log("ERROR: AccessibilityService no activo")
-                        showError("E:SVC")
-                    }
-                }
-            }
-
-            // Toque simple y doble toque círculo inferior
-            overlayView.findViewById<FrameLayout>(R.id.circleKm).setOnClickListener(
-                object : View.OnClickListener {
-                    var lastClick = 0L
-                    override fun onClick(v: View) {
-                        val now = System.currentTimeMillis()
-                        if (now - lastClick < 400) {
-                            toggleSize()
-                        } else {
-                            animateTouchGlow(overlayView.findViewById(R.id.circleKm))
-                        }
-                        lastClick = now
-                    }
-                }
-            )
+            setupCircleTouch(overlayView, params)
 
         } catch (e: Exception) {
             log("ERROR en setupOverlay: ${e.message}")
@@ -131,11 +99,94 @@ class FloatingService : Service() {
         }
     }
 
+    private fun setupCircleTouch(view: View, params: WindowManager.LayoutParams) {
+        var sx = 0f; var sy = 0f; var px = 0; var py = 0
+        var isDragging = false
+        var lastClickKm = 0L
+
+        view.setOnTouchListener { _, e ->
+            when (e.action) {
+                MotionEvent.ACTION_DOWN -> {
+                    sx = e.rawX; sy = e.rawY
+                    px = params.x; py = params.y
+                    isDragging = false
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - sx
+                    val dy = e.rawY - sy
+                    if (!isDragging && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+                        isDragging = true
+                    }
+                    if (isDragging) {
+                        params.x = px - dx.toInt()
+                        params.y = py + dy.toInt()
+                        windowManager.updateViewLayout(view, params)
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (!isDragging) {
+                        // Detectar qué círculo fue tocado
+                        val circleHora = view.findViewById<FrameLayout>(R.id.circleHora)
+                        val circleKm = view.findViewById<FrameLayout>(R.id.circleKm)
+                        val loc = IntArray(2)
+
+                        circleHora.getLocationOnScreen(loc)
+                        val horaLeft = loc[0]; val horaTop = loc[1]
+                        val horaRight = horaLeft + circleHora.width
+                        val horaBottom = horaTop + circleHora.height
+
+                        circleKm.getLocationOnScreen(loc)
+                        val kmLeft = loc[0]; val kmTop = loc[1]
+                        val kmRight = kmLeft + circleKm.width
+                        val kmBottom = kmTop + circleKm.height
+
+                        val tx = e.rawX.toInt(); val ty = e.rawY.toInt()
+
+                        when {
+                            tx in horaLeft..horaRight && ty in horaTop..horaBottom -> {
+                                // Toque círculo superior
+                                if (!isAnalyzing) {
+                                    isAnalyzing = true
+                                    resetJob?.cancel()
+                                    log("Círculo hora tocado — captura OCR")
+                                    animateTouchGlow(circleHora, currentColorHora)
+                                    view.findViewById<TextView>(R.id.tvHora).text = "..."
+                                    view.findViewById<TextView>(R.id.tvMinutos).text = ""
+                                    val accessService = UberAccessibilityService.currentInstance
+                                    if (accessService != null) {
+                                        accessService.captureAndAnalyze()
+                                    } else {
+                                        log("ERROR: AccessibilityService no activo")
+                                        showError("E:SVC")
+                                    }
+                                }
+                            }
+                            tx in kmLeft..kmRight && ty in kmTop..kmBottom -> {
+                                // Toque círculo inferior — detectar doble toque
+                                val now = System.currentTimeMillis()
+                                if (now - lastClickKm < 400) {
+                                    toggleSize()
+                                } else {
+                                    animateTouchGlow(circleKm, currentColorKm)
+                                }
+                                lastClickKm = now
+                            }
+                        }
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+    }
+
     private fun toggleSize() {
         isSmall = !isSmall
         val targetPx = dpToPx(if (isSmall) smallSize else normalSize)
         val targetTextMain = if (isSmall) 16f else 22f
-        val targetTextSub = if (isSmall) 8f else 11f
+        val targetTextSub = if (isSmall) 10f else 14f
 
         listOf(R.id.circleHora, R.id.circleKm).forEach { id ->
             val circle = overlayView.findViewById<FrameLayout>(id)
@@ -151,7 +202,7 @@ class FloatingService : Service() {
         overlayView.findViewById<TextView>(R.id.tvKmTotal).textSize = targetTextSub
     }
 
-    private fun animateTouchGlow(circle: FrameLayout) {
+    private fun animateTouchGlow(circle: FrameLayout, restoreColor: Int) {
         val animator = ValueAnimator.ofFloat(8f, 14f, 8f)
         animator.duration = 400
         animator.interpolator = DecelerateInterpolator()
@@ -162,6 +213,10 @@ class FloatingService : Service() {
                 setColor(0xFF000000.toInt())
                 setStroke(stroke, COLOR_WHITE)
             }
+        }
+        animator.doOnEnd {
+            // Restaurar color original después de la animación
+            setCircleColor(circle, restoreColor)
         }
         animator.start()
     }
@@ -179,6 +234,7 @@ class FloatingService : Service() {
 
     private fun showError(code: String) {
         scope.launch(Dispatchers.Main) {
+            currentColorHora = COLOR_RED
             setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_RED)
             overlayView.findViewById<TextView>(R.id.tvHora).text = code
             overlayView.findViewById<TextView>(R.id.tvMinutos).text = ""
@@ -192,8 +248,11 @@ class FloatingService : Service() {
         val umbral = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
             .getInt("umbral_hora", 13000)
 
-        setCircleColor(overlayView.findViewById(R.id.circleHora), colorHora(clpHora, umbral))
-        setCircleColor(overlayView.findViewById(R.id.circleKm), colorKm(clpKm))
+        currentColorHora = colorHora(clpHora, umbral)
+        currentColorKm = colorKm(clpKm)
+
+        setCircleColor(overlayView.findViewById(R.id.circleHora), currentColorHora)
+        setCircleColor(overlayView.findViewById(R.id.circleKm), currentColorKm)
 
         overlayView.findViewById<TextView>(R.id.tvHora).text = fmt.format(clpHora)
         overlayView.findViewById<TextView>(R.id.tvKm).text = fmt.format(clpKm)
@@ -214,6 +273,8 @@ class FloatingService : Service() {
     }
 
     fun resetCircles() {
+        currentColorHora = COLOR_IDLE
+        currentColorKm = COLOR_IDLE
         setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_IDLE)
         setCircleColor(overlayView.findViewById(R.id.circleKm), COLOR_IDLE)
         overlayView.findViewById<TextView>(R.id.tvHora).text = "—"
@@ -234,23 +295,6 @@ class FloatingService : Service() {
         v >= 500 -> COLOR_GREEN
         v >= 200 -> COLOR_YELLOW
         else     -> COLOR_RED
-    }
-
-    private fun makeDraggable(view: View, params: WindowManager.LayoutParams) {
-        var sx = 0f; var sy = 0f; var px = 0; var py = 0
-        view.setOnTouchListener { _, e ->
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    sx = e.rawX; sy = e.rawY; px = params.x; py = params.y; true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    params.x = px - (e.rawX - sx).toInt()
-                    params.y = py + (e.rawY - sy).toInt()
-                    windowManager.updateViewLayout(view, params); true
-                }
-                else -> false
-            }
-        }
     }
 
     override fun onDestroy() {
