@@ -4,13 +4,12 @@ import android.animation.ValueAnimator
 import android.app.*
 import android.content.Context
 import android.content.Intent
-import android.graphics.*
-import android.graphics.drawable.Drawable
+import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.view.*
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
-import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
@@ -32,7 +31,7 @@ class FloatingService : Service() {
     private val dateFormat = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
     private var isSmall = false
     private val normalSize = 110
-    private val smallSize = 77 // 110 * 0.7
+    private val smallSize = 77
 
     companion object {
         const val CHANNEL_ID = "faro_channel_v3"
@@ -91,7 +90,7 @@ class FloatingService : Service() {
             resetCircles()
             log("Overlay creado OK")
 
-            // Toque simple círculo superior — captura y análisis
+            // Toque círculo superior — captura y análisis
             overlayView.findViewById<FrameLayout>(R.id.circleHora).setOnClickListener {
                 if (!isAnalyzing) {
                     isAnalyzing = true
@@ -110,16 +109,21 @@ class FloatingService : Service() {
                 }
             }
 
-            // Toque simple círculo inferior — también dispara captura
-            overlayView.findViewById<FrameLayout>(R.id.circleKm).setOnClickListener {
-                // mismo comportamiento que el superior por ahora
-            }
-
-            // Doble toque círculo inferior — achicar/agrandar 30%
-            overlayView.findViewById<FrameLayout>(R.id.circleKm).setOnLongClickListener {
-                toggleSize()
-                true
-            }
+            // Toque simple y doble toque círculo inferior
+            overlayView.findViewById<FrameLayout>(R.id.circleKm).setOnClickListener(
+                object : View.OnClickListener {
+                    var lastClick = 0L
+                    override fun onClick(v: View) {
+                        val now = System.currentTimeMillis()
+                        if (now - lastClick < 400) {
+                            toggleSize()
+                        } else {
+                            animateTouchGlow(overlayView.findViewById(R.id.circleKm))
+                        }
+                        lastClick = now
+                    }
+                }
+            )
 
         } catch (e: Exception) {
             log("ERROR en setupOverlay: ${e.message}")
@@ -129,8 +133,7 @@ class FloatingService : Service() {
 
     private fun toggleSize() {
         isSmall = !isSmall
-        val targetDp = if (isSmall) smallSize else normalSize
-        val targetPx = dpToPx(targetDp)
+        val targetPx = dpToPx(if (isSmall) smallSize else normalSize)
         val targetTextMain = if (isSmall) 16f else 22f
         val targetTextSub = if (isSmall) 8f else 11f
 
@@ -149,72 +152,26 @@ class FloatingService : Service() {
     }
 
     private fun animateTouchGlow(circle: FrameLayout) {
-        val animator = ValueAnimator.ofFloat(6f, 18f, 6f)
-        animator.duration = 600
+        val animator = ValueAnimator.ofFloat(8f, 14f, 8f)
+        animator.duration = 400
         animator.interpolator = DecelerateInterpolator()
         animator.addUpdateListener { anim ->
-            val stroke = anim.animatedValue as Float
-            circle.background = buildCircleDrawable(COLOR_WHITE, stroke, true)
+            val stroke = (anim.animatedValue as Float).toInt()
+            circle.background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF000000.toInt())
+                setStroke(stroke, COLOR_WHITE)
+            }
         }
         animator.start()
     }
 
-    private fun buildCircleDrawable(color: Int, strokePx: Float, glow: Boolean): Drawable {
-        return object : Drawable() {
-            override fun draw(canvas: Canvas) {
-                val cx = bounds.exactCenterX()
-                val cy = bounds.exactCenterY()
-                val radius = (bounds.width() / 2f) - strokePx / 2f
-
-                // Fondo negro
-                val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    style = Paint.Style.FILL
-                    this.color = Color.BLACK
-                }
-                canvas.drawCircle(cx, cy, radius, bgPaint)
-
-                // Borde neón con glow
-                if (glow && color != COLOR_IDLE) {
-                    val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        style = Paint.Style.STROKE
-                        this.color = color
-                        this.strokeWidth = strokePx * 2.5f
-                        maskFilter = BlurMaskFilter(strokePx * 2f, BlurMaskFilter.Blur.NORMAL)
-                        alpha = 160
-                    }
-                    canvas.drawCircle(cx, cy, radius, glowPaint)
-                }
-
-                // Borde principal
-                val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                    style = Paint.Style.STROKE
-                    this.color = color
-                    this.strokeWidth = strokePx
-                }
-                canvas.drawCircle(cx, cy, radius, borderPaint)
-
-                // Línea blanca delgada interior (solo en estado idle)
-                if (color == COLOR_IDLE) {
-                    val whitePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                        style = Paint.Style.STROKE
-                        this.color = COLOR_WHITE
-                        this.strokeWidth = 1.5f
-                        alpha = 180
-                    }
-                    canvas.drawCircle(cx, cy, radius - strokePx / 2f - 2f, whitePaint)
-                }
-            }
-
-            override fun setAlpha(alpha: Int) {}
-            override fun setColorFilter(cf: ColorFilter?) {}
-            @Deprecated("Deprecated in Java")
-            override fun getOpacity() = PixelFormat.TRANSLUCENT
+    private fun setCircleColor(circle: FrameLayout, color: Int) {
+        circle.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(0xFF000000.toInt())
+            setStroke(12, color)
         }
-    }
-
-    private fun setCircleNeon(circle: FrameLayout, color: Int, active: Boolean) {
-        val strokePx = if (active) 14f else 10f
-        circle.background = buildCircleDrawable(color, strokePx, active)
     }
 
     fun showErrorPublic(code: String) = showError(code)
@@ -222,7 +179,7 @@ class FloatingService : Service() {
 
     private fun showError(code: String) {
         scope.launch(Dispatchers.Main) {
-            setCircleNeon(overlayView.findViewById(R.id.circleHora), COLOR_RED, true)
+            setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_RED)
             overlayView.findViewById<TextView>(R.id.tvHora).text = code
             overlayView.findViewById<TextView>(R.id.tvMinutos).text = ""
             delay(4000)
@@ -235,8 +192,8 @@ class FloatingService : Service() {
         val umbral = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
             .getInt("umbral_hora", 13000)
 
-        setCircleNeon(overlayView.findViewById(R.id.circleHora), colorHora(clpHora, umbral), true)
-        setCircleNeon(overlayView.findViewById(R.id.circleKm), colorKm(clpKm), true)
+        setCircleColor(overlayView.findViewById(R.id.circleHora), colorHora(clpHora, umbral))
+        setCircleColor(overlayView.findViewById(R.id.circleKm), colorKm(clpKm))
 
         overlayView.findViewById<TextView>(R.id.tvHora).text = fmt.format(clpHora)
         overlayView.findViewById<TextView>(R.id.tvKm).text = fmt.format(clpKm)
@@ -246,8 +203,8 @@ class FloatingService : Service() {
         else
             String.format("%.1f", kmTotales)
 
-        overlayView.findViewById<TextView>(R.id.tvMinutos).text = "$minTotales"
-        overlayView.findViewById<TextView>(R.id.tvKmTotal).text = kmStr
+        overlayView.findViewById<TextView>(R.id.tvMinutos).text = "$minTotales min"
+        overlayView.findViewById<TextView>(R.id.tvKmTotal).text = "$kmStr km"
 
         resetJob?.cancel()
         resetJob = scope.launch(Dispatchers.Main) {
@@ -257,8 +214,8 @@ class FloatingService : Service() {
     }
 
     fun resetCircles() {
-        setCircleNeon(overlayView.findViewById(R.id.circleHora), COLOR_IDLE, false)
-        setCircleNeon(overlayView.findViewById(R.id.circleKm), COLOR_IDLE, false)
+        setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_IDLE)
+        setCircleColor(overlayView.findViewById(R.id.circleKm), COLOR_IDLE)
         overlayView.findViewById<TextView>(R.id.tvHora).text = "—"
         overlayView.findViewById<TextView>(R.id.tvKm).text = "—"
         overlayView.findViewById<TextView>(R.id.tvMinutos).text = ""
@@ -281,7 +238,6 @@ class FloatingService : Service() {
 
     private fun makeDraggable(view: View, params: WindowManager.LayoutParams) {
         var sx = 0f; var sy = 0f; var px = 0; var py = 0
-        var lastClick = 0L
         view.setOnTouchListener { _, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
