@@ -89,8 +89,34 @@ class UberAccessibilityService : AccessibilityService() {
             }
     }
 
-    private fun extractTripData(text: String): TripData? {
+    private fun cleanOcrText(text: String): String {
+        // Fix 1 — corregir caracteres que el OCR confunde con dígitos
+        // l/I → 1, O → 0, Z → 7, S → 5 (solo dentro de contextos numéricos)
+        return text
+            .replace(Regex("""CLP([A-Za-z0-9,.]*)""")) { match ->
+                val inner = match.groupValues[1]
+                    .replace('l', '1')
+                    .replace('I', '1')
+                    .replace('O', '0')
+                    .replace('Z', '7')
+                    .replace('S', '5')
+                "CLP$inner"
+            }
+            .replace(Regex("""(\d+)\s*min\s*\(([A-Za-z0-9,.]+)\s*km\)""")) { match ->
+                val mins = match.groupValues[1]
+                val km = match.groupValues[2]
+                    .replace('l', '1')
+                    .replace('I', '1')
+                    .replace('O', '0')
+                "${mins} min (${km} km)"
+            }
+    }
+
+    private fun extractTripData(rawText: String): TripData? {
         return try {
+            // Limpiar el texto antes de procesar
+            val text = cleanOcrText(rawText)
+
             // Tarifa principal — CLP seguido de número con punto o coma como separador de miles
             val tarifaRegex = Regex("""CLP\s*(\d{1,3}(?:[.,]\d{3})*)""")
             val tarifaStr = tarifaRegex.find(text)?.groupValues?.get(1) ?: run {
@@ -99,12 +125,14 @@ class UberAccessibilityService : AccessibilityService() {
             }
             val tarifa = tarifaStr.replace(".", "").replace(",", "").toInt()
 
-            // Bono de inicio — +CLP seguido de número (opcional)
-            val bonoRegex = Regex("""\+CLP\s*(\d{1,3}(?:[.,]\d{3})*)""")
+            // Bono de inicio — +CLP seguido de número
+            // Fix 3 — limpiar decimales (.00) del bono antes de parsear
+            val bonoRegex = Regex("""\+CLP\s*(\d{1,3}(?:[.,]\d{3})*)(?:[.,]\d{1,2})?""")
             val bonoStr = bonoRegex.find(text)?.groupValues?.get(1)
             val bono = bonoStr?.replace(".", "")?.replace(",", "")?.toIntOrNull() ?: 0
 
             // Pares "X min (Y,Z km)" — primero = ir a buscar, segundo = viaje
+            // Fix 2 — el regex ya acepta dígitos corregidos por cleanOcrText
             val parRegex = Regex("""(\d+)\s*min\s*\((\d+[.,]\d+)\s*km\)""")
             val pares = parRegex.findAll(text).toList()
 
