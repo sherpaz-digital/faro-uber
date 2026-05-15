@@ -69,7 +69,12 @@ class UberAccessibilityService : AccessibilityService() {
                 val tripData = extractTripData(text)
                 Handler(Looper.getMainLooper()).post {
                     if (tripData != null) {
-                        floatingServiceInstance?.updateCircles(tripData.clpHora, tripData.clpKm)
+                        floatingServiceInstance?.updateCircles(
+                            tripData.clpHora,
+                            tripData.clpKm,
+                            tripData.minTotales,
+                            tripData.kmTotales
+                        )
                     } else {
                         floatingServiceInstance?.log("No se encontraron datos de viaje en OCR")
                         floatingServiceInstance?.showErrorPublic("E:OCR")
@@ -123,8 +128,10 @@ class UberAccessibilityService : AccessibilityService() {
             val totalKm  = (kmBuscar + kmViaje).coerceAtLeast(0.1)
 
             TripData(
-                clpHora = ((total / totalMin) * 60).toInt(),
-                clpKm   = (total / totalKm).toInt()
+                clpHora    = ((total / totalMin) * 60).toInt(),
+                clpKm      = (total / totalKm).toInt(),
+                minTotales = minBuscar + minViaje,
+                kmTotales  = kmBuscar + kmViaje
             )
         } catch (e: Exception) {
             floatingServiceInstance?.log("Excepción en extracción: ${e.message}")
@@ -133,4 +140,9 @@ class UberAccessibilityService : AccessibilityService() {
     }
 }
 
-data class TripData(val clpHora: Int, val clpKm: Int)
+data class TripData(
+    val clpHora: Int,
+    val clpKm: Int,
+    val minTotales: Int,
+    val kmTotales: Double
+)
