@@ -88,7 +88,7 @@ class FloatingService : Service() {
             resetCircles()
             log("Overlay creado OK")
 
-            setupCircleTouch(overlayView, params)
+            setupTouchHandlers(overlayView, params)
 
         } catch (e: Exception) {
             log("ERROR en setupOverlay: ${e.message}")
@@ -96,76 +96,67 @@ class FloatingService : Service() {
         }
     }
 
-    private fun setupCircleTouch(view: View, params: WindowManager.LayoutParams) {
+    private fun setupTouchHandlers(view: View, params: WindowManager.LayoutParams) {
         var sx = 0f; var sy = 0f; var px = 0; var py = 0
         var isDragging = false
+        var dragStartedOnKm = false
         var lastClickKm = 0L
 
-        view.setOnTouchListener { _, e ->
+        // Círculo superior — solo dispara análisis, sin arrastre
+        val circleHora = view.findViewById<FrameLayout>(R.id.circleHora)
+        circleHora.setOnClickListener {
+            if (!isAnalyzing) {
+                isAnalyzing = true
+                resetJob?.cancel()
+                log("Círculo hora tocado — captura OCR")
+                view.findViewById<TextView>(R.id.tvHora).text = "..."
+                view.findViewById<TextView>(R.id.tvMinutos).text = ""
+                val accessService = UberAccessibilityService.currentInstance
+                if (accessService != null) {
+                    accessService.captureAndAnalyze()
+                } else {
+                    log("ERROR: AccessibilityService no activo")
+                    showError("E:SVC")
+                }
+            }
+        }
+
+        // Círculo inferior — arrastre ambos círculos + doble toque para toggleSize
+        val circleKm = view.findViewById<FrameLayout>(R.id.circleKm)
+        circleKm.setOnTouchListener { _, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
                     sx = e.rawX; sy = e.rawY
                     px = params.x; py = params.y
                     isDragging = false
+                    dragStartedOnKm = true
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX - sx
-                    val dy = e.rawY - sy
-                    if (!isDragging && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
-                        isDragging = true
-                    }
-                    if (isDragging) {
-                        params.x = px - dx.toInt()
-                        params.y = py + dy.toInt()
-                        windowManager.updateViewLayout(view, params)
+                    if (dragStartedOnKm) {
+                        val dx = e.rawX - sx
+                        val dy = e.rawY - sy
+                        if (!isDragging && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+                            isDragging = true
+                        }
+                        if (isDragging) {
+                            params.x = px - dx.toInt()
+                            params.y = py + dy.toInt()
+                            windowManager.updateViewLayout(view, params)
+                        }
                     }
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    dragStartedOnKm = false
                     if (!isDragging) {
-                        val circleHora = view.findViewById<FrameLayout>(R.id.circleHora)
-                        val circleKm = view.findViewById<FrameLayout>(R.id.circleKm)
-                        val loc = IntArray(2)
-
-                        circleHora.getLocationOnScreen(loc)
-                        val horaLeft = loc[0]; val horaTop = loc[1]
-                        val horaRight = horaLeft + circleHora.width
-                        val horaBottom = horaTop + circleHora.height
-
-                        circleKm.getLocationOnScreen(loc)
-                        val kmLeft = loc[0]; val kmTop = loc[1]
-                        val kmRight = kmLeft + circleKm.width
-                        val kmBottom = kmTop + circleKm.height
-
-                        val tx = e.rawX.toInt(); val ty = e.rawY.toInt()
-
-                        when {
-                            tx in horaLeft..horaRight && ty in horaTop..horaBottom -> {
-                                if (!isAnalyzing) {
-                                    isAnalyzing = true
-                                    resetJob?.cancel()
-                                    log("Círculo hora tocado — captura OCR")
-                                    view.findViewById<TextView>(R.id.tvHora).text = "..."
-                                    view.findViewById<TextView>(R.id.tvMinutos).text = ""
-                                    val accessService = UberAccessibilityService.currentInstance
-                                    if (accessService != null) {
-                                        accessService.captureAndAnalyze()
-                                    } else {
-                                        log("ERROR: AccessibilityService no activo")
-                                        showError("E:SVC")
-                                    }
-                                }
-                            }
-                            tx in kmLeft..kmRight && ty in kmTop..kmBottom -> {
-                                val now = System.currentTimeMillis()
-                                if (now - lastClickKm < 400) {
-                                    toggleSize()
-                                }
-                                lastClickKm = now
-                            }
+                        val now = System.currentTimeMillis()
+                        if (now - lastClickKm < 400) {
+                            toggleSize()
                         }
+                        lastClickKm = now
                     }
+                    isDragging = false
                     true
                 }
                 else -> false
