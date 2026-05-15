@@ -1,7 +1,5 @@
 package com.sherpaz.faro
 
-import android.animation.Animator
-import android.animation.ValueAnimator
 import android.app.*
 import android.content.Context
 import android.content.Intent
@@ -9,7 +7,6 @@ import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
 import android.os.IBinder
 import android.view.*
-import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.core.app.NotificationCompat
@@ -40,7 +37,6 @@ class FloatingService : Service() {
         const val CHANNEL_ID = "faro_channel_v3"
         const val NOTIF_ID = 1
         const val COLOR_IDLE   = 0xFF666666.toInt()
-        const val COLOR_WHITE  = 0xFFFFFFFF.toInt()
         const val COLOR_RED    = 0xFFe03030.toInt()
         const val COLOR_YELLOW = 0xFFf5d800.toInt()
         const val COLOR_GREEN  = 0xFF1a9e3a.toInt()
@@ -150,7 +146,6 @@ class FloatingService : Service() {
                                     isAnalyzing = true
                                     resetJob?.cancel()
                                     log("Círculo hora tocado — captura OCR")
-                                    animateTouchGlow(circleHora, currentColorHora)
                                     view.findViewById<TextView>(R.id.tvHora).text = "..."
                                     view.findViewById<TextView>(R.id.tvMinutos).text = ""
                                     val accessService = UberAccessibilityService.currentInstance
@@ -166,8 +161,6 @@ class FloatingService : Service() {
                                 val now = System.currentTimeMillis()
                                 if (now - lastClickKm < 400) {
                                     toggleSize()
-                                } else {
-                                    animateTouchGlow(circleKm, currentColorKm)
                                 }
                                 lastClickKm = now
                             }
@@ -198,29 +191,6 @@ class FloatingService : Service() {
         overlayView.findViewById<TextView>(R.id.tvKm).textSize = targetTextMain
         overlayView.findViewById<TextView>(R.id.tvMinutos).textSize = targetTextSub
         overlayView.findViewById<TextView>(R.id.tvKmTotal).textSize = targetTextSub
-    }
-
-    private fun animateTouchGlow(circle: FrameLayout, restoreColor: Int) {
-        val animator = ValueAnimator.ofFloat(8f, 14f, 8f)
-        animator.duration = 400
-        animator.interpolator = DecelerateInterpolator()
-        animator.addUpdateListener { anim ->
-            val stroke = (anim.animatedValue as Float).toInt()
-            circle.background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(0xFF000000.toInt())
-                setStroke(stroke, COLOR_WHITE)
-            }
-        }
-        animator.addListener(object : Animator.AnimatorListener {
-            override fun onAnimationEnd(a: Animator) {
-                setCircleColor(circle, restoreColor)
-            }
-            override fun onAnimationStart(a: Animator) {}
-            override fun onAnimationCancel(a: Animator) {}
-            override fun onAnimationRepeat(a: Animator) {}
-        })
-        animator.start()
     }
 
     private fun setCircleColor(circle: FrameLayout, color: Int) {
