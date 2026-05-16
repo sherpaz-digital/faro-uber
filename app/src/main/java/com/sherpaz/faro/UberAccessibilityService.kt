@@ -47,7 +47,15 @@ class UberAccessibilityService : AccessibilityService() {
 
                     if (bitmap != null) {
                         floatingServiceInstance?.log("Captura OK: ${bitmap.width}x${bitmap.height}")
-                        analyzeWithOCR(bitmap)
+
+                        // Recortar el 60% inferior — donde siempre está el panel de solicitud
+                        val cropTop = (bitmap.height * 0.40).toInt()
+                        val cropped = Bitmap.createBitmap(
+                            bitmap, 0, cropTop, bitmap.width, bitmap.height - cropTop
+                        )
+                        floatingServiceInstance?.log("Recorte: desde y=$cropTop — ${cropped.width}x${cropped.height}")
+
+                        analyzeWithOCR(cropped)
                     } else {
                         floatingServiceInstance?.log("ERROR: bitmap null tras captura")
                         floatingServiceInstance?.showErrorPublic("E:BMP")
@@ -68,7 +76,7 @@ class UberAccessibilityService : AccessibilityService() {
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
                 val text = visionText.text
-                floatingServiceInstance?.log("OCR OK — texto: ${text.take(400)}")
+                floatingServiceInstance?.log("OCR OK — texto: ${text.take(500)}")
                 val tripData = extractTripData(text)
                 Handler(Looper.getMainLooper()).post {
                     if (tripData != null) {
@@ -93,10 +101,9 @@ class UberAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Limpia errores OCR comunes en contextos numéricos.
-     * Paso 1: limpia dentro de montos CLP (l→1, I→1, O→0)
-     * Paso 2: limpia l/I/O en CUALQUIER secuencia que esté cerca de "min" o "km"
-     *         para que "1l min" → "11 min" ANTES de que el regex busque pares.
+     * Limpia errores OCR comunes.
+     * Paso 1: dentro de montos CLP — l→1, I→1, O→0, Z→7
+     * Paso 2: en contexto numérico cerca de "min" o "km" — l→1, I→1, O→0
      */
     private fun cleanOcrText(text: String): String {
         var cleaned = text
@@ -106,12 +113,13 @@ class UberAccessibilityService : AccessibilityService() {
                     .replace('l', '1')
                     .replace('I', '1')
                     .replace('O', '0')
+                    .replace('Z', '7')
                 "CLP$inner"
             }
 
-        // Limpiar l/I/O en contexto numérico GENERAL cerca de min/km
-        // Esto convierte "1l min" → "11 min", "5Ol km" → "501 km", etc.
-        cleaned = cleaned.replace(Regex("""(\d[lIO\d]*)\s*(min|km)""")) { match ->
+        // Limpiar l/I/O en contexto numérico cerca de min/km
+        // Convierte "1l min" → "11 min", "4.l km" → "4.1 km", etc.
+        cleaned = cleaned.replace(Regex("""(\d[lIO\d.,]*)\s*(min|km)""")) { match ->
             val num = match.groupValues[1]
                 .replace('l', '1')
                 .replace('I', '1')
@@ -133,9 +141,11 @@ class UberAccessibilityService : AccessibilityService() {
     private fun extractTripData(rawText: String): TripData? {
         return try {
             val text = cleanOcrText(rawText)
-            floatingServiceInstance?.log("Texto limpio: ${text.take(400)}")
+            floatingServiceInstance?.log("Texto limpio: ${text.take(500)}")
 
-            // Tarifa — acepta con o sin separador de miles
+            // Tarifa — el número grande después de CLP
+            // La tarifa ya incluye todo (bonos, inicio de viaje, surge)
+            // No hay que sumar nada extra
             val tarifaRegex = Regex("""CLP\s*(\d[\d.,]*)""")
             val tarifaStr = tarifaRegex.find(text)?.groupValues?.get(1) ?: run {
                 floatingServiceInstance?.log("No se encontró tarifa CLP")
@@ -147,24 +157,19 @@ class UberAccessibilityService : AccessibilityService() {
                 return null
             }
 
-            // Bono de inicio — solo si dice "por inicio de viaje"
-            val bonoRegex = Regex("""\+CLP\s*(\d[\d.,]*).*?por inicio de viaje""", RegexOption.IGNORE_CASE)
-            val bonoStr = bonoRegex.find(text)?.groupValues?.get(1)
-            val bono = if (bonoStr != null) parseCLP(bonoStr) else 0
-
             // Pares "X min (Y,Z km)" — regex principal con decimal
             val parRegex = Regex("""(\d+)\s*min\s*\((\d+[.,]\d+)\s*km\)""")
             var pares = parRegex.findAll(text).toList()
 
             // Fallback — regex sin decimal obligatorio
             if (pares.size < 2) {
-                floatingServiceInstance?.log("Pares con decimal insuficientes (${pares.size}), probando fallback sin decimal")
+                floatingServiceInstance?.log("Pares con decimal insuficientes (${pares.size}), probando fallback")
                 val fallbackRegex = Regex("""(\d+)\s*min\s*\((\d+(?:[.,]\d+)?)\s*km\)""")
                 pares = fallbackRegex.findAll(text).toList()
             }
 
             if (pares.size < 2) {
-                floatingServiceInstance?.log("Pares min/km insuficientes: ${pares.size} encontrados")
+                floatingServiceInstance?.log("Pares min/km insuficientes: ${pares.size}")
                 return null
             }
 
@@ -184,17 +189,16 @@ class UberAccessibilityService : AccessibilityService() {
             }
 
             floatingServiceInstance?.log(
-                "Datos extraídos — tarifa=$tarifa bono=$bono " +
+                "Datos extraídos — tarifa=$tarifa " +
                 "buscar=${minBuscar}min/${kmBuscar}km viaje=${minViaje}min/${kmViaje}km"
             )
 
-            val total    = tarifa + bono
             val totalMin = (minBuscar + minViaje).toDouble().coerceAtLeast(1.0)
             val totalKm  = (kmBuscar + kmViaje).coerceAtLeast(0.1)
 
             TripData(
-                clpHora    = ((total / totalMin) * 60).toInt(),
-                clpKm      = (total / totalKm).toInt(),
+                clpHora    = ((tarifa / totalMin) * 60).toInt(),
+                clpKm      = (tarifa / totalKm).toInt(),
                 minTotales = minBuscar + minViaje,
                 kmTotales  = kmBuscar + kmViaje
             )
