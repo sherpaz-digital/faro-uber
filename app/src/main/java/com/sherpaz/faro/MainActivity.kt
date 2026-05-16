@@ -18,8 +18,17 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         val prefs = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
-        val etUmbral = findViewById<EditText>(R.id.etUmbralHora)
-        etUmbral.setText(prefs.getInt("umbral_hora", 13000).toString())
+
+        // Cargar tramos guardados (o defaults)
+        val etRojo     = findViewById<EditText>(R.id.etTramoRojo)
+        val etAmarillo = findViewById<EditText>(R.id.etTramoAmarillo)
+        val etVerde    = findViewById<EditText>(R.id.etTramoVerde)
+        val etMorado   = findViewById<EditText>(R.id.etTramoMorado)
+
+        etRojo.setText(prefs.getInt("tramo_rojo", 9999).toString())
+        etAmarillo.setText(prefs.getInt("tramo_amarillo", 12999).toString())
+        etVerde.setText(prefs.getInt("tramo_verde", 14999).toString())
+        etMorado.setText(prefs.getInt("tramo_morado", 19999).toString())
 
         findViewById<Button>(R.id.btnOverlay).setOnClickListener {
             startActivity(
@@ -32,10 +41,28 @@ class MainActivity : AppCompatActivity() {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
         }
 
-        findViewById<Button>(R.id.btnSaveUmbral).setOnClickListener {
-            val u = etUmbral.text.toString().toIntOrNull() ?: 13000
-            prefs.edit().putInt("umbral_hora", u).apply()
-            Toast.makeText(this, "Umbral guardado: $$u/hora", Toast.LENGTH_SHORT).show()
+        findViewById<Button>(R.id.btnSaveTramos).setOnClickListener {
+            val r = etRojo.text.toString().toIntOrNull() ?: 9999
+            val a = etAmarillo.text.toString().toIntOrNull() ?: 12999
+            val v = etVerde.text.toString().toIntOrNull() ?: 14999
+            val m = etMorado.text.toString().toIntOrNull() ?: 19999
+
+            // Validar que los tramos sean ascendentes
+            if (r >= a || a >= v || v >= m) {
+                Toast.makeText(this, "Los tramos deben ser ascendentes", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+
+            prefs.edit()
+                .putInt("tramo_rojo", r)
+                .putInt("tramo_amarillo", a)
+                .putInt("tramo_verde", v)
+                .putInt("tramo_morado", m)
+                .apply()
+
+            Toast.makeText(this,
+                "Tramos guardados:\n🔴 0–$r  🟡 ${r+1}–$a\n🟢 ${a+1}–$v  🟣 ${v+1}–$m  🔵 ${m+1}+",
+                Toast.LENGTH_LONG).show()
         }
 
         findViewById<Button>(R.id.btnStart).setOnClickListener {
