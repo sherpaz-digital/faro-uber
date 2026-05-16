@@ -132,7 +132,7 @@
                 android:textSize="11sp"
                 android:layout_marginBottom="16dp"/>
 
-            <!-- ROJO: $0 — limite1 -->
+            <!-- ROJO -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -165,7 +165,7 @@
                     android:gravity="center"/>
             </LinearLayout>
 
-            <!-- AMARILLO: limite1+1 — limite2 -->
+            <!-- AMARILLO -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -198,7 +198,7 @@
                     android:gravity="center"/>
             </LinearLayout>
 
-            <!-- VERDE: limite2+1 — limite3 -->
+            <!-- VERDE -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -231,7 +231,7 @@
                     android:gravity="center"/>
             </LinearLayout>
 
-            <!-- MORADO: limite3+1 — limite4 -->
+            <!-- MORADO -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -264,7 +264,7 @@
                     android:gravity="center"/>
             </LinearLayout>
 
-            <!-- AZUL: limite4+1 en adelante -->
+            <!-- AZUL -->
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -311,7 +311,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="🔴 $0 — $199\n🟡 $200 — $499\n🟢 $500 — $599\n🟣 $600+"
+                android:text="🔴 $0 — $199\n🟡 $200 — $499\n🟢 $500 — $599\n🟣 $600 — $999\n🔵 $1.000+"
                 android:textColor="#AAAAAA"
                 android:textSize="13sp"
                 android:lineSpacingExtra="6dp"/>
