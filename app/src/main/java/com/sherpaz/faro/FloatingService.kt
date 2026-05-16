@@ -114,6 +114,11 @@ class FloatingService : Service() {
         }
     }
 
+    /**
+     * Re-attach del overlay para forzar z-order al tope.
+     * Solo se llama desde acciones donde un breve parpadeo es aceptable
+     * (doble toque en círculo inferior), NO en cada captura OCR.
+     */
     private fun bringOverlayToFront() {
         try {
             windowManager.removeView(overlayView)
@@ -123,6 +128,10 @@ class FloatingService : Service() {
         }
     }
 
+    /**
+     * Oculta todo el texto de ambos círculos — quedan negro puro.
+     * Sin "—", sin "...", sin parpadeo.
+     */
     private fun hideCircleText() {
         currentColorHora = COLOR_IDLE
         currentColorKm = COLOR_IDLE
@@ -140,6 +149,7 @@ class FloatingService : Service() {
         var dragStartedOnKm = false
         var lastClickKm = 0L
 
+        // Círculo superior — dispara análisis
         val circleHora = view.findViewById<FrameLayout>(R.id.circleHora)
         circleHora.setOnClickListener {
             if (!isAnalyzing) {
@@ -147,12 +157,15 @@ class FloatingService : Service() {
                 resetJob?.cancel()
                 log("Círculo hora tocado — iniciando captura OCR")
 
+                // Círculos quedan negro vacío — sin parpadeo
                 hideCircleText()
-                bringOverlayToFront()
+
+                // Recargar tramos por si cambiaron desde MainActivity
                 loadTramos()
 
+                // Delay 150ms para que el frame se dibuje sin texto
                 scope.launch(Dispatchers.Main) {
-                    delay(300)
+                    delay(150)
                     val accessService = UberAccessibilityService.currentInstance
                     if (accessService != null) {
                         accessService.captureAndAnalyze()
@@ -164,6 +177,7 @@ class FloatingService : Service() {
             }
         }
 
+        // Círculo inferior — arrastre ambos círculos + doble toque para toggleSize
         val circleKm = view.findViewById<FrameLayout>(R.id.circleKm)
         circleKm.setOnTouchListener { _, e ->
             when (e.action) {
@@ -195,6 +209,8 @@ class FloatingService : Service() {
                         val now = System.currentTimeMillis()
                         if (now - lastClickKm < 400) {
                             toggleSize()
+                            // Re-attach al cambiar tamaño — aquí el parpadeo es aceptable
+                            bringOverlayToFront()
                         }
                         lastClickKm = now
                     }
