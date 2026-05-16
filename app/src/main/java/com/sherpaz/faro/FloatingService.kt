@@ -22,6 +22,7 @@ class FloatingService : Service() {
 
     private lateinit var windowManager: WindowManager
     private lateinit var overlayView: View
+    private lateinit var overlayParams: WindowManager.LayoutParams
     private val fmt = NumberFormat.getNumberInstance(Locale("es", "CL"))
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var isAnalyzing = false
@@ -33,6 +34,12 @@ class FloatingService : Service() {
     private var currentColorHora = COLOR_IDLE
     private var currentColorKm = COLOR_IDLE
 
+    // Tramos $/hora — se cargan de SharedPreferences
+    private var tramoRojo = 9999
+    private var tramoAmarillo = 12999
+    private var tramoVerde = 14999
+    private var tramoMorado = 19999
+
     companion object {
         const val CHANNEL_ID = "faro_channel_v3"
         const val NOTIF_ID = 1
@@ -41,6 +48,7 @@ class FloatingService : Service() {
         const val COLOR_YELLOW = 0xFFf5d800.toInt()
         const val COLOR_GREEN  = 0xFF1a9e3a.toInt()
         const val COLOR_PURPLE = 0xFF7c2fc8.toInt()
+        const val COLOR_BLUE   = 0xFF2979FF.toInt()
 
         var floatingServiceInstance: FloatingService? = null
     }
@@ -58,6 +66,15 @@ class FloatingService : Service() {
         } catch (e: Exception) {}
     }
 
+    private fun loadTramos() {
+        val prefs = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
+        tramoRojo     = prefs.getInt("tramo_rojo", 9999)
+        tramoAmarillo = prefs.getInt("tramo_amarillo", 12999)
+        tramoVerde    = prefs.getInt("tramo_verde", 14999)
+        tramoMorado   = prefs.getInt("tramo_morado", 19999)
+        log("Tramos cargados — rojo≤$tramoRojo amarillo≤$tramoAmarillo verde≤$tramoVerde morado≤$tramoMorado azul>${tramoMorado}")
+    }
+
     override fun onCreate() {
         super.onCreate()
         floatingServiceInstance = this
@@ -65,6 +82,7 @@ class FloatingService : Service() {
         createNotificationChannel()
         startForeground(NOTIF_ID, buildNotification())
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
+        loadTramos()
         log("=== Faro iniciado ===")
         setupOverlay()
     }
@@ -75,7 +93,7 @@ class FloatingService : Service() {
     private fun setupOverlay() {
         try {
             overlayView = LayoutInflater.from(this).inflate(R.layout.overlay_circles, null)
-            val params = WindowManager.LayoutParams(
+            overlayParams = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
@@ -84,15 +102,28 @@ class FloatingService : Service() {
                 PixelFormat.TRANSLUCENT
             ).apply { gravity = Gravity.TOP or Gravity.END; x = 20; y = 60 }
 
-            windowManager.addView(overlayView, params)
+            windowManager.addView(overlayView, overlayParams)
             resetCircles()
             log("Overlay creado OK")
 
-            setupTouchHandlers(overlayView, params)
+            setupTouchHandlers(overlayView, overlayParams)
 
         } catch (e: Exception) {
             log("ERROR en setupOverlay: ${e.message}")
             stopSelf()
+        }
+    }
+
+    /**
+     * Re-attach del overlay para forzar z-order al tope.
+     * Soluciona que Faro quede detrás del popup de Uber/Waze.
+     */
+    private fun bringOverlayToFront() {
+        try {
+            windowManager.removeView(overlayView)
+            windowManager.addView(overlayView, overlayParams)
+        } catch (e: Exception) {
+            log("Error re-attach overlay: ${e.message}")
         }
     }
 
@@ -102,21 +133,34 @@ class FloatingService : Service() {
         var dragStartedOnKm = false
         var lastClickKm = 0L
 
-        // Círculo superior — solo dispara análisis, sin arrastre
+        // Círculo superior — dispara análisis con delay para limpiar pantalla
         val circleHora = view.findViewById<FrameLayout>(R.id.circleHora)
         circleHora.setOnClickListener {
             if (!isAnalyzing) {
                 isAnalyzing = true
                 resetJob?.cancel()
-                log("Círculo hora tocado — captura OCR")
+                log("Círculo hora tocado — iniciando captura OCR")
+
+                // Bug 1 fix: limpiar círculos ANTES de capturar
+                resetCircles()
                 view.findViewById<TextView>(R.id.tvHora).text = "..."
-                view.findViewById<TextView>(R.id.tvMinutos).text = ""
-                val accessService = UberAccessibilityService.currentInstance
-                if (accessService != null) {
-                    accessService.captureAndAnalyze()
-                } else {
-                    log("ERROR: AccessibilityService no activo")
-                    showError("E:SVC")
+
+                // Bug 3 fix: subir overlay al tope del z-order
+                bringOverlayToFront()
+
+                // Recargar tramos por si cambiaron desde MainActivity
+                loadTramos()
+
+                // Delay para que el frame se dibuje sin números viejos
+                scope.launch(Dispatchers.Main) {
+                    delay(300)
+                    val accessService = UberAccessibilityService.currentInstance
+                    if (accessService != null) {
+                        accessService.captureAndAnalyze()
+                    } else {
+                        log("ERROR: AccessibilityService no activo")
+                        showError("E:SVC")
+                    }
                 }
             }
         }
@@ -208,10 +252,7 @@ class FloatingService : Service() {
     }
 
     fun updateCircles(clpHora: Int, clpKm: Int, minTotales: Int, kmTotales: Double) {
-        val umbral = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
-            .getInt("umbral_hora", 13000)
-
-        currentColorHora = colorHora(clpHora, umbral)
+        currentColorHora = colorHora(clpHora)
         currentColorKm = colorKm(clpKm)
 
         setCircleColor(overlayView.findViewById(R.id.circleHora), currentColorHora)
@@ -246,13 +287,23 @@ class FloatingService : Service() {
         overlayView.findViewById<TextView>(R.id.tvKmTotal).text = ""
     }
 
-    private fun colorHora(v: Int, u: Int) = when {
-        v >= u + 4000 -> COLOR_PURPLE
-        v >= u + 2000 -> COLOR_GREEN
-        v >= u - 2000 -> COLOR_YELLOW
-        else          -> COLOR_RED
+    /**
+     * Semáforo $/hora — 5 tramos fijos configurables
+     * Rojo:     $0 — tramoRojo
+     * Amarillo: tramoRojo+1 — tramoAmarillo
+     * Verde:    tramoAmarillo+1 — tramoVerde
+     * Morado:   tramoVerde+1 — tramoMorado
+     * Azul:     tramoMorado+1 en adelante
+     */
+    private fun colorHora(v: Int) = when {
+        v > tramoMorado   -> COLOR_BLUE
+        v > tramoVerde    -> COLOR_PURPLE
+        v > tramoAmarillo -> COLOR_GREEN
+        v > tramoRojo     -> COLOR_YELLOW
+        else              -> COLOR_RED
     }
 
+    /** Semáforo $/km — tramos fijos sin cambio */
     private fun colorKm(v: Int) = when {
         v >= 600 -> COLOR_PURPLE
         v >= 500 -> COLOR_GREEN
