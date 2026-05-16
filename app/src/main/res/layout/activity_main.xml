@@ -24,6 +24,8 @@
             android:textColor="#888888"
             android:textSize="13sp"
             android:layout_marginBottom="32dp"/>
+
+        <!-- ESTADO -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -70,6 +72,8 @@
                 android:backgroundTint="#222222"
                 android:textColor="#FFFFFF"/>
         </LinearLayout>
+
+        <!-- CLAUDE API KEY -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -104,6 +108,8 @@
                 android:textColor="#FFFFFF"
                 android:layout_marginTop="8dp"/>
         </LinearLayout>
+
+        <!-- SEMÁFORO $/HORA — TRAMOS -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -114,29 +120,203 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="UMBRAL $/HORA"
+                android:text="SEMÁFORO $/HORA"
                 android:textColor="#888888"
                 android:textSize="10sp"
-                android:layout_marginBottom="12dp"/>
-            <EditText
-                android:id="@+id/etUmbralHora"
+                android:layout_marginBottom="4dp"/>
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Ingresa el valor máximo de cada tramo"
+                android:textColor="#555555"
+                android:textSize="11sp"
+                android:layout_marginBottom="16dp"/>
+
+            <!-- ROJO: $0 — limite1 -->
+            <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="13000"
-                android:textColor="#FFFFFF"
-                android:background="#2a2a2a"
-                android:padding="12dp"
-                android:inputType="number"
-                android:textSize="16sp"
-                android:layout_marginBottom="12dp"/>
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="10dp">
+                <View
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:background="#e03030"
+                    android:layout_marginEnd="12dp"/>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Rojo  $0 —"
+                    android:textColor="#AAAAAA"
+                    android:textSize="13sp"
+                    android:layout_marginEnd="8dp"/>
+                <EditText
+                    android:id="@+id/etTramoRojo"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="9999"
+                    android:textColor="#FFFFFF"
+                    android:background="#2a2a2a"
+                    android:padding="10dp"
+                    android:inputType="number"
+                    android:textSize="14sp"
+                    android:gravity="center"/>
+            </LinearLayout>
+
+            <!-- AMARILLO: limite1+1 — limite2 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="10dp">
+                <View
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:background="#f5d800"
+                    android:layout_marginEnd="12dp"/>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Amarillo —"
+                    android:textColor="#AAAAAA"
+                    android:textSize="13sp"
+                    android:layout_marginEnd="8dp"/>
+                <EditText
+                    android:id="@+id/etTramoAmarillo"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="12999"
+                    android:textColor="#FFFFFF"
+                    android:background="#2a2a2a"
+                    android:padding="10dp"
+                    android:inputType="number"
+                    android:textSize="14sp"
+                    android:gravity="center"/>
+            </LinearLayout>
+
+            <!-- VERDE: limite2+1 — limite3 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="10dp">
+                <View
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:background="#1a9e3a"
+                    android:layout_marginEnd="12dp"/>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Verde —"
+                    android:textColor="#AAAAAA"
+                    android:textSize="13sp"
+                    android:layout_marginEnd="8dp"/>
+                <EditText
+                    android:id="@+id/etTramoVerde"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="14999"
+                    android:textColor="#FFFFFF"
+                    android:background="#2a2a2a"
+                    android:padding="10dp"
+                    android:inputType="number"
+                    android:textSize="14sp"
+                    android:gravity="center"/>
+            </LinearLayout>
+
+            <!-- MORADO: limite3+1 — limite4 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="10dp">
+                <View
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:background="#7c2fc8"
+                    android:layout_marginEnd="12dp"/>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Morado —"
+                    android:textColor="#AAAAAA"
+                    android:textSize="13sp"
+                    android:layout_marginEnd="8dp"/>
+                <EditText
+                    android:id="@+id/etTramoMorado"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="19999"
+                    android:textColor="#FFFFFF"
+                    android:background="#2a2a2a"
+                    android:padding="10dp"
+                    android:inputType="number"
+                    android:textSize="14sp"
+                    android:gravity="center"/>
+            </LinearLayout>
+
+            <!-- AZUL: limite4+1 en adelante -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="16dp">
+                <View
+                    android:layout_width="14dp"
+                    android:layout_height="14dp"
+                    android:background="#2979FF"
+                    android:layout_marginEnd="12dp"/>
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Azul  $20.000+"
+                    android:textColor="#AAAAAA"
+                    android:textSize="13sp"/>
+            </LinearLayout>
+
             <Button
-                android:id="@+id/btnSaveUmbral"
+                android:id="@+id/btnSaveTramos"
                 android:layout_width="match_parent"
                 android:layout_height="48dp"
-                android:text="Guardar umbral"
+                android:text="Guardar tramos"
                 android:backgroundTint="#222222"
                 android:textColor="#FFFFFF"/>
         </LinearLayout>
+
+        <!-- SEMÁFORO $/KM — solo lectura, tramos fijos -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:background="#1a1a1a"
+            android:padding="16dp"
+            android:layout_marginBottom="16dp">
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="SEMÁFORO $/KM (FIJO)"
+                android:textColor="#888888"
+                android:textSize="10sp"
+                android:layout_marginBottom="12dp"/>
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="🔴 $0 — $199\n🟡 $200 — $499\n🟢 $500 — $599\n🟣 $600+"
+                android:textColor="#AAAAAA"
+                android:textSize="13sp"
+                android:lineSpacingExtra="6dp"/>
+        </LinearLayout>
+
         <Button
             android:id="@+id/btnStart"
             android:layout_width="match_parent"
