@@ -48,8 +48,8 @@ class UberAccessibilityService : AccessibilityService() {
                     if (bitmap != null) {
                         floatingServiceInstance?.log("Captura OK: ${bitmap.width}x${bitmap.height}")
 
-                        // Recortar el 60% inferior — donde siempre está el panel de solicitud
-                        val cropTop = (bitmap.height * 0.40).toInt()
+                        // Recortar el 80% inferior — cubre paneles altos de solicitud
+                        val cropTop = (bitmap.height * 0.20).toInt()
                         val cropped = Bitmap.createBitmap(
                             bitmap, 0, cropTop, bitmap.width, bitmap.height - cropTop
                         )
@@ -102,23 +102,21 @@ class UberAccessibilityService : AccessibilityService() {
 
     /**
      * Limpia errores OCR comunes.
-     * Paso 1: dentro de montos CLP — l→1, I→1, O→0, Z→7
+     * Paso 1: dentro de montos CLP (sin +) — l→1, I→1, O→0, Z→7
      * Paso 2: en contexto numérico cerca de "min" o "km" — l→1, I→1, O→0
      */
     private fun cleanOcrText(text: String): String {
-        var cleaned = text
-            // Limpiar dentro de montos CLP
-            .replace(Regex("""CLP([A-Za-z0-9,.]*)""")) { match ->
-                val inner = match.groupValues[1]
-                    .replace('l', '1')
-                    .replace('I', '1')
-                    .replace('O', '0')
-                    .replace('Z', '7')
-                "CLP$inner"
-            }
+        // Paso 1: limpiar dentro de tarifa CLP (sin + adelante)
+        var cleaned = text.replace(Regex("""(?<!\+)CLP([A-Za-z0-9,.]*)""")) { match ->
+            val inner = match.groupValues[1]
+                .replace('l', '1')
+                .replace('I', '1')
+                .replace('O', '0')
+                .replace('Z', '7')
+            "CLP$inner"
+        }
 
-        // Limpiar l/I/O en contexto numérico cerca de min/km
-        // Convierte "1l min" → "11 min", "4.l km" → "4.1 km", etc.
+        // Paso 2: limpiar l/I/O en contexto numérico cerca de min/km
         cleaned = cleaned.replace(Regex("""(\d[lIO\d.,]*)\s*(min|km)""")) { match ->
             val num = match.groupValues[1]
                 .replace('l', '1')
@@ -143,12 +141,11 @@ class UberAccessibilityService : AccessibilityService() {
             val text = cleanOcrText(rawText)
             floatingServiceInstance?.log("Texto limpio: ${text.take(500)}")
 
-            // Tarifa — el número grande después de CLP
+            // Tarifa — solo CLP sin + adelante (excluye bonos +CLP)
             // La tarifa ya incluye todo (bonos, inicio de viaje, surge)
-            // No hay que sumar nada extra
-            val tarifaRegex = Regex("""CLP\s*(\d[\d.,]*)""")
+            val tarifaRegex = Regex("""(?<!\+)CLP\s*(\d[\d,]*)""")
             val tarifaStr = tarifaRegex.find(text)?.groupValues?.get(1) ?: run {
-                floatingServiceInstance?.log("No se encontró tarifa CLP")
+                floatingServiceInstance?.log("No se encontró tarifa CLP (sin +)")
                 return null
             }
             val tarifa = parseCLP(tarifaStr)
