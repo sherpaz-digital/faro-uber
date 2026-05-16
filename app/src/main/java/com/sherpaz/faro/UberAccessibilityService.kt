@@ -89,42 +89,63 @@ class UberAccessibilityService : AccessibilityService() {
             }
     }
 
+    /**
+     * FIX BUG 1: cleanOcrText ahora limpia l/I→1 en CUALQUIER contexto numérico
+     * antes de aplicar los regex de pares min/km. Así "1l min" → "11 min" correctamente.
+     */
     private fun cleanOcrText(text: String): String {
-        return text
-            .replace(Regex("""CLP([A-Za-z0-9,.]*)""")) { match ->
-                val inner = match.groupValues[1]
-                    .replace('l', '1')
-                    .replace('I', '1')
-                    .replace('O', '0')
-                    .replace('Z', '7')
-                    .replace('S', '5')
-                "CLP$inner"
-            }
-            .replace(Regex("""(\d+)\s*min\s*\(([A-Za-z0-9,.]+)\s*km\)""")) { match ->
-                val mins = match.groupValues[1]
-                val km = match.groupValues[2]
-                    .replace('l', '1')
-                    .replace('I', '1')
-                    .replace('O', '0')
-                "${mins} min (${km} km)"
-            }
+        var result = text
+
+        // Paso 1: corregir confusiones l/I→1, O→0 dentro de secuencias numéricas generales
+        // Esto cubre casos como "1l min", "l4 km", "7l km"
+        result = result.replace(Regex("""(?<=\d)[lI](?=\d)"""), "1")  // entre dígitos: 1l4 → 114
+        result = result.replace(Regex("""(?<=\d)[lI](?=\s)"""), "1")  // al final: 1l → 11
+        result = result.replace(Regex("""(?<=\s)[lI](?=\d)"""), "1")  // al inicio: l4 → 14
+        result = result.replace(Regex("""(?<=\()[lI](?=\d)"""), "1")  // tras paréntesis: (l4 → (14
+
+        // Paso 2: corregir dentro de valores CLP
+        result = result.replace(Regex("""CLP([A-Za-z0-9,.]*)""")) { match ->
+            val inner = match.groupValues[1]
+                .replace('l', '1')
+                .replace('I', '1')
+                .replace('O', '0')
+                .replace('Z', '7')
+                .replace('S', '5')
+            "CLP$inner"
+        }
+
+        // Paso 3: corregir dentro de pares min/km
+        result = result.replace(Regex("""(\d+)\s*min\s*\(([A-Za-z0-9,.]+)\s*km\)""")) { match ->
+            val mins = match.groupValues[1]
+            val km = match.groupValues[2]
+                .replace('l', '1')
+                .replace('I', '1')
+                .replace('O', '0')
+            "${mins} min (${km} km)"
+        }
+
+        return result
     }
 
     private fun parseCLP(raw: String): Int {
-        // Limpia separadores de miles y decimales
-        // Acepta: 7,407 | 7.407 | 7407 | 11,097
         val clean = raw
             .replace(".", "")
             .replace(",", "")
         return clean.toIntOrNull() ?: 0
     }
 
+    /**
+     * FIX BUG 2: bono "incluido" se ignora — ya está en la tarifa.
+     * Solo se suma el bono que dice "por inicio de viaje".
+     *
+     * FIX BUG 3: el regex de pares ahora acepta km sin decimal (ej: "71 km")
+     * y aplica corrección automática si km > 50 en viaje corto → inserta punto decimal.
+     */
     private fun extractTripData(rawText: String): TripData? {
         return try {
             val text = cleanOcrText(rawText)
 
-            // Tarifa — acepta con o sin separador de miles
-            // CLP7407 | CLP7,407 | CLP11,097 | CLP2,157
+            // Tarifa
             val tarifaRegex = Regex("""CLP\s*(\d[\d.,]*)""")
             val tarifaStr = tarifaRegex.find(text)?.groupValues?.get(1) ?: run {
                 floatingServiceInstance?.log("No se encontró tarifa CLP")
@@ -136,24 +157,55 @@ class UberAccessibilityService : AccessibilityService() {
                 return null
             }
 
-            // Bono de inicio — +CLP seguido de número, ignora decimales
-            val bonoRegex = Regex("""\+CLP\s*(\d[\d.,]*)(?:[.,]\d{1,2})?""")
+            // FIX BUG 2: bono solo si dice "por inicio de viaje", ignorar "incluido"
+            val bonoRegex = Regex("""\+CLP\s*(\d[\d.,]*)(?:[.,]\d{1,2})?\s*por inicio de viaje""", RegexOption.IGNORE_CASE)
             val bonoStr = bonoRegex.find(text)?.groupValues?.get(1)
             val bono = if (bonoStr != null) parseCLP(bonoStr) else 0
 
-            // Pares "X min (Y,Z km)"
-            val parRegex = Regex("""(\d+)\s*min\s*\((\d+[.,]\d+)\s*km\)""")
-            val pares = parRegex.findAll(text).toList()
+            // FIX BUG 3: pares min/km — acepta con o sin decimal
+            // Regex principal: con decimal obligatorio (caso normal)
+            // Regex fallback: sin decimal (cuando OCR pierde el punto)
+            val parConDecimalRegex = Regex("""(\d+)\s*min\s*\((\d+[.,]\d+)\s*km\)""")
+            val parSinDecimalRegex = Regex("""(\d+)\s*min\s*\((\d+)\s*km\)""")
 
-            if (pares.size < 2) {
-                floatingServiceInstance?.log("Pares min/km insuficientes: ${pares.size} encontrados")
+            // Buscar todos los pares — primero con decimal, luego sin
+            val paresConDecimal = parConDecimalRegex.findAll(text).toList()
+            val paresSinDecimal = parSinDecimalRegex.findAll(text).toList()
+
+            // Combinar y ordenar por posición en el texto
+            data class Par(val minutos: Int, val km: Double, val pos: Int)
+
+            val todosPares = mutableListOf<Par>()
+
+            paresConDecimal.forEach { m ->
+                val km = m.groupValues[2].replace(",", ".").toDoubleOrNull() ?: return@forEach
+                todosPares.add(Par(m.groupValues[1].toInt(), km, m.range.first))
+            }
+
+            // Agregar sin-decimal solo si no fue capturado ya por el regex con decimal
+            paresSinDecimal.forEach { m ->
+                val pos = m.range.first
+                val yaCapturado = paresConDecimal.any { Math.abs(it.range.first - pos) < 5 }
+                if (!yaCapturado) {
+                    var km = m.groupValues[2].toDoubleOrNull() ?: return@forEach
+                    // FIX: si km >= 50 probablemente el OCR perdió el punto decimal
+                    // Ej: "71" en realidad es "7.1", "43" es "4.3"
+                    if (km >= 50) km /= 10.0
+                    todosPares.add(Par(m.groupValues[1].toInt(), km, pos))
+                }
+            }
+
+            todosPares.sortBy { it.pos }
+
+            if (todosPares.size < 2) {
+                floatingServiceInstance?.log("Pares min/km insuficientes: ${todosPares.size} encontrados")
                 return null
             }
 
-            val minBuscar = pares[0].groupValues[1].toInt()
-            val kmBuscar  = pares[0].groupValues[2].replace(",", ".").toDouble()
-            val minViaje  = pares[1].groupValues[1].toInt()
-            val kmViaje   = pares[1].groupValues[2].replace(",", ".").toDouble()
+            val minBuscar = todosPares[0].minutos
+            val kmBuscar  = todosPares[0].km
+            val minViaje  = todosPares[1].minutos
+            val kmViaje   = todosPares[1].km
 
             floatingServiceInstance?.log(
                 "Datos extraídos — tarifa=$tarifa bono=$bono " +
