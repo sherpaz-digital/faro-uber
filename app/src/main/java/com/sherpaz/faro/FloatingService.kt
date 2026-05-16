@@ -114,10 +114,6 @@ class FloatingService : Service() {
         }
     }
 
-    /**
-     * Re-attach del overlay para forzar z-order al tope.
-     * Soluciona que Faro quede detrás del popup de Uber/Waze.
-     */
     private fun bringOverlayToFront() {
         try {
             windowManager.removeView(overlayView)
@@ -127,13 +123,23 @@ class FloatingService : Service() {
         }
     }
 
+    private fun hideCircleText() {
+        currentColorHora = COLOR_IDLE
+        currentColorKm = COLOR_IDLE
+        setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_IDLE)
+        setCircleColor(overlayView.findViewById(R.id.circleKm), COLOR_IDLE)
+        overlayView.findViewById<TextView>(R.id.tvHora).text = ""
+        overlayView.findViewById<TextView>(R.id.tvKm).text = ""
+        overlayView.findViewById<TextView>(R.id.tvMinutos).text = ""
+        overlayView.findViewById<TextView>(R.id.tvKmTotal).text = ""
+    }
+
     private fun setupTouchHandlers(view: View, params: WindowManager.LayoutParams) {
         var sx = 0f; var sy = 0f; var px = 0; var py = 0
         var isDragging = false
         var dragStartedOnKm = false
         var lastClickKm = 0L
 
-        // Círculo superior — dispara análisis con delay para limpiar pantalla
         val circleHora = view.findViewById<FrameLayout>(R.id.circleHora)
         circleHora.setOnClickListener {
             if (!isAnalyzing) {
@@ -141,17 +147,10 @@ class FloatingService : Service() {
                 resetJob?.cancel()
                 log("Círculo hora tocado — iniciando captura OCR")
 
-                // Bug 1 fix: limpiar círculos ANTES de capturar
-                resetCircles()
-                view.findViewById<TextView>(R.id.tvHora).text = "..."
-
-                // Bug 3 fix: subir overlay al tope del z-order
+                hideCircleText()
                 bringOverlayToFront()
-
-                // Recargar tramos por si cambiaron desde MainActivity
                 loadTramos()
 
-                // Delay para que el frame se dibuje sin números viejos
                 scope.launch(Dispatchers.Main) {
                     delay(300)
                     val accessService = UberAccessibilityService.currentInstance
@@ -165,7 +164,6 @@ class FloatingService : Service() {
             }
         }
 
-        // Círculo inferior — arrastre ambos círculos + doble toque para toggleSize
         val circleKm = view.findViewById<FrameLayout>(R.id.circleKm)
         circleKm.setOnTouchListener { _, e ->
             when (e.action) {
@@ -289,11 +287,6 @@ class FloatingService : Service() {
 
     /**
      * Semáforo $/hora — 5 tramos fijos configurables
-     * Rojo:     $0 — tramoRojo
-     * Amarillo: tramoRojo+1 — tramoAmarillo
-     * Verde:    tramoAmarillo+1 — tramoVerde
-     * Morado:   tramoVerde+1 — tramoMorado
-     * Azul:     tramoMorado+1 en adelante
      */
     private fun colorHora(v: Int) = when {
         v > tramoMorado   -> COLOR_BLUE
@@ -303,12 +296,20 @@ class FloatingService : Service() {
         else              -> COLOR_RED
     }
 
-    /** Semáforo $/km — tramos fijos sin cambio */
+    /**
+     * Semáforo $/km — 5 tramos fijos
+     * 🔴 $0 — $199
+     * 🟡 $200 — $499
+     * 🟢 $500 — $599
+     * 🟣 $600 — $999
+     * 🔵 $1.000+
+     */
     private fun colorKm(v: Int) = when {
-        v >= 600 -> COLOR_PURPLE
-        v >= 500 -> COLOR_GREEN
-        v >= 200 -> COLOR_YELLOW
-        else     -> COLOR_RED
+        v >= 1000 -> COLOR_BLUE
+        v >= 600  -> COLOR_PURPLE
+        v >= 500  -> COLOR_GREEN
+        v >= 200  -> COLOR_YELLOW
+        else      -> COLOR_RED
     }
 
     override fun onDestroy() {
