@@ -16,7 +16,6 @@ class UberAccessibilityService : AccessibilityService() {
         var currentInstance: UberAccessibilityService? = null
     }
 
-    // Reutilizar recognizer en vez de crear uno nuevo cada vez
     private val recognizer by lazy {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
@@ -94,11 +93,14 @@ class UberAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Limpia texto OCR — solo correcciones seguras: l/I→1 y O→0
-     * dentro de contextos numéricos (después de CLP y dentro de pares min/km)
+     * Limpia errores OCR comunes en contextos numéricos.
+     * Paso 1: limpia dentro de montos CLP (l→1, I→1, O→0)
+     * Paso 2: limpia l/I/O en CUALQUIER secuencia que esté cerca de "min" o "km"
+     *         para que "1l min" → "11 min" ANTES de que el regex busque pares.
      */
     private fun cleanOcrText(text: String): String {
-        return text
+        var cleaned = text
+            // Limpiar dentro de montos CLP
             .replace(Regex("""CLP([A-Za-z0-9,.]*)""")) { match ->
                 val inner = match.groupValues[1]
                     .replace('l', '1')
@@ -106,17 +108,19 @@ class UberAccessibilityService : AccessibilityService() {
                     .replace('O', '0')
                 "CLP$inner"
             }
-            .replace(Regex("""(\d+)\s*min\s*\(([A-Za-z0-9,.]+)\s*km\)""")) { match ->
-                val mins = match.groupValues[1]
-                    .replace('l', '1')
-                    .replace('I', '1')
-                    .replace('O', '0')
-                val km = match.groupValues[2]
-                    .replace('l', '1')
-                    .replace('I', '1')
-                    .replace('O', '0')
-                "${mins} min (${km} km)"
-            }
+
+        // Limpiar l/I/O en contexto numérico GENERAL cerca de min/km
+        // Esto convierte "1l min" → "11 min", "5Ol km" → "501 km", etc.
+        cleaned = cleaned.replace(Regex("""(\d[lIO\d]*)\s*(min|km)""")) { match ->
+            val num = match.groupValues[1]
+                .replace('l', '1')
+                .replace('I', '1')
+                .replace('O', '0')
+            val unit = match.groupValues[2]
+            "$num $unit"
+        }
+
+        return cleaned
     }
 
     private fun parseCLP(raw: String): Int {
@@ -129,6 +133,7 @@ class UberAccessibilityService : AccessibilityService() {
     private fun extractTripData(rawText: String): TripData? {
         return try {
             val text = cleanOcrText(rawText)
+            floatingServiceInstance?.log("Texto limpio: ${text.take(400)}")
 
             // Tarifa — acepta con o sin separador de miles
             val tarifaRegex = Regex("""CLP\s*(\d[\d.,]*)""")
@@ -142,7 +147,7 @@ class UberAccessibilityService : AccessibilityService() {
                 return null
             }
 
-            // Bono de inicio — solo si dice "por inicio de viaje", ignora bonos "incluido"
+            // Bono de inicio — solo si dice "por inicio de viaje"
             val bonoRegex = Regex("""\+CLP\s*(\d[\d.,]*).*?por inicio de viaje""", RegexOption.IGNORE_CASE)
             val bonoStr = bonoRegex.find(text)?.groupValues?.get(1)
             val bono = if (bonoStr != null) parseCLP(bonoStr) else 0
@@ -151,7 +156,7 @@ class UberAccessibilityService : AccessibilityService() {
             val parRegex = Regex("""(\d+)\s*min\s*\((\d+[.,]\d+)\s*km\)""")
             var pares = parRegex.findAll(text).toList()
 
-            // Fallback — regex sin decimal obligatorio (OCR pierde el punto a veces)
+            // Fallback — regex sin decimal obligatorio
             if (pares.size < 2) {
                 floatingServiceInstance?.log("Pares con decimal insuficientes (${pares.size}), probando fallback sin decimal")
                 val fallbackRegex = Regex("""(\d+)\s*min\s*\((\d+(?:[.,]\d+)?)\s*km\)""")
