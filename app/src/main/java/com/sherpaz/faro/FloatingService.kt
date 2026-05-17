@@ -34,7 +34,6 @@ class FloatingService : Service() {
     private var currentColorHora = COLOR_IDLE
     private var currentColorKm = COLOR_IDLE
 
-    // Tramos $/hora — se cargan de SharedPreferences
     private var tramoRojo = 9999
     private var tramoAmarillo = 12999
     private var tramoVerde = 14999
@@ -201,7 +200,7 @@ class FloatingService : Service() {
         isSmall = !isSmall
         val targetPx = dpToPx(if (isSmall) smallSize else normalSize)
         val targetTextMain = if (isSmall) 16f else 22f
-        val targetTextSub = if (isSmall) 10f else 11f
+        val targetTextSub = if (isSmall) 10f else 14f
 
         listOf(R.id.circleHora, R.id.circleKm).forEach { id ->
             val circle = overlayView.findViewById<FrameLayout>(id)
