@@ -114,29 +114,12 @@ class FloatingService : Service() {
         }
     }
 
-    /**
-     * Re-attach del overlay para forzar z-order al tope.
-     * Solo se llama desde acciones donde un breve parpadeo es aceptable
-     * (doble toque en círculo inferior), NO en cada captura OCR.
-     */
-    private fun bringOverlayToFront() {
-        try {
-            windowManager.removeView(overlayView)
-            windowManager.addView(overlayView, overlayParams)
-        } catch (e: Exception) {
-            log("Error re-attach overlay: ${e.message}")
-        }
-    }
-
-    /**
-     * Oculta todo el texto de ambos círculos — quedan negro puro.
-     * Sin "—", sin "...", sin parpadeo.
-     */
     private fun hideCircleText() {
         currentColorHora = COLOR_IDLE
         currentColorKm = COLOR_IDLE
         setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_IDLE)
         setCircleColor(overlayView.findViewById(R.id.circleKm), COLOR_IDLE)
+        overlayView.findViewById<TextView>(R.id.tvClpMin).text = ""
         overlayView.findViewById<TextView>(R.id.tvHora).text = ""
         overlayView.findViewById<TextView>(R.id.tvKm).text = ""
         overlayView.findViewById<TextView>(R.id.tvMinutos).text = ""
@@ -149,7 +132,6 @@ class FloatingService : Service() {
         var dragStartedOnKm = false
         var lastClickKm = 0L
 
-        // Círculo superior — dispara análisis
         val circleHora = view.findViewById<FrameLayout>(R.id.circleHora)
         circleHora.setOnClickListener {
             if (!isAnalyzing) {
@@ -157,13 +139,9 @@ class FloatingService : Service() {
                 resetJob?.cancel()
                 log("Círculo hora tocado — iniciando captura OCR")
 
-                // Círculos quedan negro vacío — sin parpadeo
                 hideCircleText()
-
-                // Recargar tramos por si cambiaron desde MainActivity
                 loadTramos()
 
-                // Delay 150ms para que el frame se dibuje sin texto
                 scope.launch(Dispatchers.Main) {
                     delay(150)
                     val accessService = UberAccessibilityService.currentInstance
@@ -177,7 +155,6 @@ class FloatingService : Service() {
             }
         }
 
-        // Círculo inferior — arrastre ambos círculos + doble toque para toggleSize
         val circleKm = view.findViewById<FrameLayout>(R.id.circleKm)
         circleKm.setOnTouchListener { _, e ->
             when (e.action) {
@@ -209,8 +186,6 @@ class FloatingService : Service() {
                         val now = System.currentTimeMillis()
                         if (now - lastClickKm < 400) {
                             toggleSize()
-                            // Re-attach al cambiar tamaño — aquí el parpadeo es aceptable
-                            bringOverlayToFront()
                         }
                         lastClickKm = now
                     }
@@ -226,7 +201,7 @@ class FloatingService : Service() {
         isSmall = !isSmall
         val targetPx = dpToPx(if (isSmall) smallSize else normalSize)
         val targetTextMain = if (isSmall) 16f else 22f
-        val targetTextSub = if (isSmall) 10f else 14f
+        val targetTextSub = if (isSmall) 10f else 11f
 
         listOf(R.id.circleHora, R.id.circleKm).forEach { id ->
             val circle = overlayView.findViewById<FrameLayout>(id)
@@ -236,6 +211,7 @@ class FloatingService : Service() {
             circle.layoutParams = lp
         }
 
+        overlayView.findViewById<TextView>(R.id.tvClpMin).textSize = targetTextSub
         overlayView.findViewById<TextView>(R.id.tvHora).textSize = targetTextMain
         overlayView.findViewById<TextView>(R.id.tvKm).textSize = targetTextMain
         overlayView.findViewById<TextView>(R.id.tvMinutos).textSize = targetTextSub
@@ -257,6 +233,7 @@ class FloatingService : Service() {
         scope.launch(Dispatchers.Main) {
             currentColorHora = COLOR_RED
             setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_RED)
+            overlayView.findViewById<TextView>(R.id.tvClpMin).text = ""
             overlayView.findViewById<TextView>(R.id.tvHora).text = code
             overlayView.findViewById<TextView>(R.id.tvMinutos).text = ""
             delay(4000)
@@ -265,13 +242,14 @@ class FloatingService : Service() {
         }
     }
 
-    fun updateCircles(clpHora: Int, clpKm: Int, minTotales: Int, kmTotales: Double) {
+    fun updateCircles(clpHora: Int, clpKm: Int, clpMin: Int, minTotales: Int, kmTotales: Double) {
         currentColorHora = colorHora(clpHora)
         currentColorKm = colorKm(clpKm)
 
         setCircleColor(overlayView.findViewById(R.id.circleHora), currentColorHora)
         setCircleColor(overlayView.findViewById(R.id.circleKm), currentColorKm)
 
+        overlayView.findViewById<TextView>(R.id.tvClpMin).text = fmt.format(clpMin)
         overlayView.findViewById<TextView>(R.id.tvHora).text = fmt.format(clpHora)
         overlayView.findViewById<TextView>(R.id.tvKm).text = fmt.format(clpKm)
 
@@ -295,15 +273,13 @@ class FloatingService : Service() {
         currentColorKm = COLOR_IDLE
         setCircleColor(overlayView.findViewById(R.id.circleHora), COLOR_IDLE)
         setCircleColor(overlayView.findViewById(R.id.circleKm), COLOR_IDLE)
+        overlayView.findViewById<TextView>(R.id.tvClpMin).text = ""
         overlayView.findViewById<TextView>(R.id.tvHora).text = "—"
         overlayView.findViewById<TextView>(R.id.tvKm).text = "—"
         overlayView.findViewById<TextView>(R.id.tvMinutos).text = ""
         overlayView.findViewById<TextView>(R.id.tvKmTotal).text = ""
     }
 
-    /**
-     * Semáforo $/hora — 5 tramos fijos configurables
-     */
     private fun colorHora(v: Int) = when {
         v > tramoMorado   -> COLOR_BLUE
         v > tramoVerde    -> COLOR_PURPLE
@@ -312,14 +288,6 @@ class FloatingService : Service() {
         else              -> COLOR_RED
     }
 
-    /**
-     * Semáforo $/km — 5 tramos fijos
-     * 🔴 $0 — $199
-     * 🟡 $200 — $499
-     * 🟢 $500 — $599
-     * 🟣 $600 — $999
-     * 🔵 $1.000+
-     */
     private fun colorKm(v: Int) = when {
         v >= 1000 -> COLOR_BLUE
         v >= 600  -> COLOR_PURPLE
