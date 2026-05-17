@@ -83,6 +83,7 @@ class UberAccessibilityService : AccessibilityService() {
                         floatingServiceInstance?.updateCircles(
                             tripData.clpHora,
                             tripData.clpKm,
+                            tripData.clpMin,
                             tripData.minTotales,
                             tripData.kmTotales
                         )
@@ -100,13 +101,7 @@ class UberAccessibilityService : AccessibilityService() {
             }
     }
 
-    /**
-     * Limpia errores OCR comunes.
-     * Paso 1: dentro de montos CLP (sin +) — l→1, I→1, O→0, Z→7
-     * Paso 2: en contexto numérico cerca de "min" o "km" — l→1, I→1, O→0
-     */
     private fun cleanOcrText(text: String): String {
-        // Paso 1: limpiar dentro de tarifa CLP (sin + adelante)
         var cleaned = text.replace(Regex("""(?<!\+)CLP([A-Za-z0-9,.]*)""")) { match ->
             val inner = match.groupValues[1]
                 .replace('l', '1')
@@ -116,7 +111,6 @@ class UberAccessibilityService : AccessibilityService() {
             "CLP$inner"
         }
 
-        // Paso 2: limpiar l/I/O en contexto numérico cerca de min/km
         cleaned = cleaned.replace(Regex("""(\d[lIO\d.,]*)\s*(min|km)""")) { match ->
             val num = match.groupValues[1]
                 .replace('l', '1')
@@ -141,8 +135,6 @@ class UberAccessibilityService : AccessibilityService() {
             val text = cleanOcrText(rawText)
             floatingServiceInstance?.log("Texto limpio: ${text.take(500)}")
 
-            // Tarifa — solo CLP sin + adelante (excluye bonos +CLP)
-            // La tarifa ya incluye todo (bonos, inicio de viaje, surge)
             val tarifaRegex = Regex("""(?<!\+)CLP\s*(\d[\d,]*)""")
             val tarifaStr = tarifaRegex.find(text)?.groupValues?.get(1) ?: run {
                 floatingServiceInstance?.log("No se encontró tarifa CLP (sin +)")
@@ -154,11 +146,9 @@ class UberAccessibilityService : AccessibilityService() {
                 return null
             }
 
-            // Pares "X min (Y,Z km)" — regex principal con decimal
             val parRegex = Regex("""(\d+)\s*min\s*\((\d+[.,]\d+)\s*km\)""")
             var pares = parRegex.findAll(text).toList()
 
-            // Fallback — regex sin decimal obligatorio
             if (pares.size < 2) {
                 floatingServiceInstance?.log("Pares con decimal insuficientes (${pares.size}), probando fallback")
                 val fallbackRegex = Regex("""(\d+)\s*min\s*\((\d+(?:[.,]\d+)?)\s*km\)""")
@@ -175,7 +165,6 @@ class UberAccessibilityService : AccessibilityService() {
             val minViaje  = pares[1].groupValues[1].toInt()
             var kmViaje   = pares[1].groupValues[2].replace(",", ".").toDouble()
 
-            // Fallback: si OCR perdió el decimal y km >= 50, dividir por 10
             if (kmBuscar >= 50) {
                 floatingServiceInstance?.log("kmBuscar=$kmBuscar sospechoso (>=50), dividiendo por 10")
                 kmBuscar /= 10.0
@@ -196,6 +185,7 @@ class UberAccessibilityService : AccessibilityService() {
             TripData(
                 clpHora    = ((tarifa / totalMin) * 60).toInt(),
                 clpKm      = (tarifa / totalKm).toInt(),
+                clpMin     = (tarifa / totalMin).toInt(),
                 minTotales = minBuscar + minViaje,
                 kmTotales  = kmBuscar + kmViaje
             )
@@ -209,6 +199,7 @@ class UberAccessibilityService : AccessibilityService() {
 data class TripData(
     val clpHora: Int,
     val clpKm: Int,
+    val clpMin: Int,
     val minTotales: Int,
     val kmTotales: Double
 )
