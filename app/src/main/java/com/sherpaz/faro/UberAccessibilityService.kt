@@ -5,6 +5,11 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.content.ContentValues
+import android.provider.MediaStore
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
@@ -55,6 +60,7 @@ class UberAccessibilityService : AccessibilityService() {
                         )
                         floatingServiceInstance?.log("Recorte: desde y=$cropTop — ${cropped.width}x${cropped.height}")
 
+                        saveBitmapToGallery(bitmap)
                         analyzeWithOCR(cropped)
                     } else {
                         floatingServiceInstance?.log("ERROR: bitmap null tras captura")
@@ -70,6 +76,28 @@ class UberAccessibilityService : AccessibilityService() {
         )
     }
 
+    private fun saveBitmapToGallery(bitmap: Bitmap) {
+    try {
+        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+        val filename = "faro_$timestamp.jpg"
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Faro")
+        }
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+        if (uri != null) {
+            contentResolver.openOutputStream(uri)?.use { out ->
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+            }
+            floatingServiceInstance?.log("Screenshot guardado: $filename")
+        } else {
+            floatingServiceInstance?.log("ERROR: no se pudo crear URI en MediaStore")
+        }
+    } catch (e: Exception) {
+        floatingServiceInstance?.log("ERROR al guardar screenshot: ${e.message}")
+    }
+}
     private fun analyzeWithOCR(bitmap: Bitmap) {
         val image = InputImage.fromBitmap(bitmap, 0)
 
