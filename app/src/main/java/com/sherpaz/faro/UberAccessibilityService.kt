@@ -1,23 +1,24 @@
 package com.sherpaz.faro
 
 import android.accessibilityservice.AccessibilityService
+import android.content.ContentValues
 import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
+import android.provider.MediaStore
 import android.view.accessibility.AccessibilityEvent
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class UberAccessibilityService : AccessibilityService() {
 
     companion object {
         var floatingServiceInstance: FloatingService? = null
         var currentInstance: UberAccessibilityService? = null
-    }
-
-    private val recognizer by lazy {
-        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
 
     override fun onServiceConnected() {
@@ -47,15 +48,8 @@ class UberAccessibilityService : AccessibilityService() {
 
                     if (bitmap != null) {
                         floatingServiceInstance?.log("Captura OK: ${bitmap.width}x${bitmap.height}")
-
-                        // Recortar el 80% inferior — cubre paneles altos de solicitud
-                        val cropTop = (bitmap.height * 0.20).toInt()
-                        val cropped = Bitmap.createBitmap(
-                            bitmap, 0, cropTop, bitmap.width, bitmap.height - cropTop
-                        )
-                        floatingServiceInstance?.log("Recorte: desde y=$cropTop — ${cropped.width}x${cropped.height}")
-
-                        analyzeWithOCR(cropped)
+                        analyzeWithOCR(bitmap)
+                        saveBitmapToGallery(bitmap) // ← adición pura, no altera OCR
                     } else {
                         floatingServiceInstance?.log("ERROR: bitmap null tras captura")
                         floatingServiceInstance?.showErrorPublic("E:BMP")
@@ -70,20 +64,45 @@ class UberAccessibilityService : AccessibilityService() {
         )
     }
 
+    private fun saveBitmapToGallery(bitmap: Bitmap) {
+        try {
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val filename = "faro_$timestamp.jpg"
+
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Faro")
+            }
+
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if (uri != null) {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                }
+                floatingServiceInstance?.log("Screenshot guardado: $filename")
+            } else {
+                floatingServiceInstance?.log("ERROR: no se pudo crear URI en MediaStore")
+            }
+        } catch (e: Exception) {
+            floatingServiceInstance?.log("ERROR al guardar screenshot: ${e.message}")
+        }
+    }
+
     private fun analyzeWithOCR(bitmap: Bitmap) {
         val image = InputImage.fromBitmap(bitmap, 0)
+        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
 
         recognizer.process(image)
             .addOnSuccessListener { visionText ->
                 val text = visionText.text
-                floatingServiceInstance?.log("OCR OK — texto: ${text.take(500)}")
+                floatingServiceInstance?.log("OCR OK — texto: ${text.take(400)}")
                 val tripData = extractTripData(text)
                 Handler(Looper.getMainLooper()).post {
                     if (tripData != null) {
                         floatingServiceInstance?.updateCircles(
                             tripData.clpHora,
                             tripData.clpKm,
-                            tripData.clpMin,
                             tripData.minTotales,
                             tripData.kmTotales
                         )
@@ -101,41 +120,25 @@ class UberAccessibilityService : AccessibilityService() {
             }
     }
 
-    /**
-     * Limpia errores OCR comunes.
-     * Paso 1: dentro de tarifa CLP (sin +) — l→1, I→1, O→0, Z→7
-     * Paso 2: normalizar ., y ,. a . en contextos numéricos (0.,2 → 0.2)
-     * Paso 3: l/I/O al inicio o dentro de número antes de min/km (l.7 km → 1.7 km)
-     */
     private fun cleanOcrText(text: String): String {
-        // Paso 1: limpiar dentro de tarifa CLP (sin + adelante)
-        var cleaned = text.replace(Regex("""(?<!\+)CLP([A-Za-z0-9,.]*)""")) { match ->
-            val inner = match.groupValues[1]
-                .replace('l', '1')
-                .replace('I', '1')
-                .replace('O', '0')
-                .replace('Z', '7')
-            "CLP$inner"
-        }
-
-        // Paso 2: normalizar ., y ,. a . en todo el texto
-        // Cubre casos como "0.,2 km" → "0.2 km"
-        cleaned = cleaned
-            .replace(".,", ".")
-            .replace(",.", ".")
-
-        // Paso 3: limpiar l/I/O en contexto numérico antes de min/km
-        // Cubre tanto "1l min" como "l.7 km" (l al inicio)
-        cleaned = cleaned.replace(Regex("""([lIO\d][lIO\d.,]*)\s*(min|km)""")) { match ->
-            val num = match.groupValues[1]
-                .replace('l', '1')
-                .replace('I', '1')
-                .replace('O', '0')
-            val unit = match.groupValues[2]
-            "$num $unit"
-        }
-
-        return cleaned
+        return text
+            .replace(Regex("""CLP([A-Za-z0-9,.]*)""")) { match ->
+                val inner = match.groupValues[1]
+                    .replace('l', '1')
+                    .replace('I', '1')
+                    .replace('O', '0')
+                    .replace('Z', '7')
+                    .replace('S', '5')
+                "CLP$inner"
+            }
+            .replace(Regex("""(\d+)\s*min\s*\(([A-Za-z0-9,.]+)\s*km\)""")) { match ->
+                val mins = match.groupValues[1]
+                val km = match.groupValues[2]
+                    .replace('l', '1')
+                    .replace('I', '1')
+                    .replace('O', '0')
+                "${mins} min (${km} km)"
+            }
     }
 
     private fun parseCLP(raw: String): Int {
@@ -148,12 +151,10 @@ class UberAccessibilityService : AccessibilityService() {
     private fun extractTripData(rawText: String): TripData? {
         return try {
             val text = cleanOcrText(rawText)
-            floatingServiceInstance?.log("Texto limpio: ${text.take(500)}")
 
-            // Tarifa — solo CLP sin + adelante (excluye bonos +CLP)
-            val tarifaRegex = Regex("""(?<!\+)CLP\s*(\d[\d,]*)""")
+            val tarifaRegex = Regex("""CLP\s*(\d[\d.,]*)""")
             val tarifaStr = tarifaRegex.find(text)?.groupValues?.get(1) ?: run {
-                floatingServiceInstance?.log("No se encontró tarifa CLP (sin +)")
+                floatingServiceInstance?.log("No se encontró tarifa CLP")
                 return null
             }
             val tarifa = parseCLP(tarifaStr)
@@ -162,49 +163,35 @@ class UberAccessibilityService : AccessibilityService() {
                 return null
             }
 
-            // Pares "X min (Y,Z km)" — regex principal con decimal
+            val bonoRegex = Regex("""\+CLP\s*(\d[\d.,]*)(?:[.,]\d{1,2})?""")
+            val bonoStr = bonoRegex.find(text)?.groupValues?.get(1)
+            val bono = if (bonoStr != null) parseCLP(bonoStr) else 0
+
             val parRegex = Regex("""(\d+)\s*min\s*\((\d+[.,]\d+)\s*km\)""")
-            var pares = parRegex.findAll(text).toList()
-
-            // Fallback — regex sin decimal obligatorio
-            if (pares.size < 2) {
-                floatingServiceInstance?.log("Pares con decimal insuficientes (${pares.size}), probando fallback")
-                val fallbackRegex = Regex("""(\d+)\s*min\s*\((\d+(?:[.,]\d+)?)\s*km\)""")
-                pares = fallbackRegex.findAll(text).toList()
-            }
+            val pares = parRegex.findAll(text).toList()
 
             if (pares.size < 2) {
-                floatingServiceInstance?.log("Pares min/km insuficientes: ${pares.size}")
+                floatingServiceInstance?.log("Pares min/km insuficientes: ${pares.size} encontrados")
                 return null
             }
 
             val minBuscar = pares[0].groupValues[1].toInt()
-            var kmBuscar  = pares[0].groupValues[2].replace(",", ".").toDouble()
+            val kmBuscar  = pares[0].groupValues[2].replace(",", ".").toDouble()
             val minViaje  = pares[1].groupValues[1].toInt()
-            var kmViaje   = pares[1].groupValues[2].replace(",", ".").toDouble()
-
-            // Fallback: si OCR perdió el decimal y km >= 50, dividir por 10
-            if (kmBuscar >= 50) {
-                floatingServiceInstance?.log("kmBuscar=$kmBuscar sospechoso (>=50), dividiendo por 10")
-                kmBuscar /= 10.0
-            }
-            if (kmViaje >= 50) {
-                floatingServiceInstance?.log("kmViaje=$kmViaje sospechoso (>=50), dividiendo por 10")
-                kmViaje /= 10.0
-            }
+            val kmViaje   = pares[1].groupValues[2].replace(",", ".").toDouble()
 
             floatingServiceInstance?.log(
-                "Datos extraídos — tarifa=$tarifa " +
+                "Datos extraídos — tarifa=$tarifa bono=$bono " +
                 "buscar=${minBuscar}min/${kmBuscar}km viaje=${minViaje}min/${kmViaje}km"
             )
 
+            val total    = tarifa + bono
             val totalMin = (minBuscar + minViaje).toDouble().coerceAtLeast(1.0)
             val totalKm  = (kmBuscar + kmViaje).coerceAtLeast(0.1)
 
             TripData(
-                clpHora    = ((tarifa / totalMin) * 60).toInt(),
-                clpKm      = (tarifa / totalKm).toInt(),
-                clpMin     = (tarifa / totalMin).toInt(),
+                clpHora    = ((total / totalMin) * 60).toInt(),
+                clpKm      = (total / totalKm).toInt(),
                 minTotales = minBuscar + minViaje,
                 kmTotales  = kmBuscar + kmViaje
             )
@@ -218,7 +205,6 @@ class UberAccessibilityService : AccessibilityService() {
 data class TripData(
     val clpHora: Int,
     val clpKm: Int,
-    val clpMin: Int,
     val minTotales: Int,
     val kmTotales: Double
 )
