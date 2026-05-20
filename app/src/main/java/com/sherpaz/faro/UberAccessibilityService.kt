@@ -35,7 +35,18 @@ class UberAccessibilityService : AccessibilityService() {
         currentInstance = null
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    /**
+     * Detecta cuando Uber Driver lanza su popup de solicitud
+     * y sube los círculos de Faro al tope del z-order inmediatamente.
+     */
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            event.packageName == "com.ubercab.driver") {
+            floatingServiceInstance?.bringOverlayToFront()
+        }
+    }
+
     override fun onInterrupt() {}
 
     fun captureAndAnalyze() {
@@ -77,27 +88,28 @@ class UberAccessibilityService : AccessibilityService() {
     }
 
     private fun saveBitmapToGallery(bitmap: Bitmap) {
-    try {
-        val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-        val filename = "faro_$timestamp.jpg"
-        val values = ContentValues().apply {
-            put(MediaStore.Images.Media.DISPLAY_NAME, filename)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-            put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Faro")
-        }
-        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
-        if (uri != null) {
-            contentResolver.openOutputStream(uri)?.use { out ->
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+        try {
+            val timestamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val filename = "faro_$timestamp.jpg"
+            val values = ContentValues().apply {
+                put(MediaStore.Images.Media.DISPLAY_NAME, filename)
+                put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Faro")
             }
-            floatingServiceInstance?.log("Screenshot guardado: $filename")
-        } else {
-            floatingServiceInstance?.log("ERROR: no se pudo crear URI en MediaStore")
+            val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+            if (uri != null) {
+                contentResolver.openOutputStream(uri)?.use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                }
+                floatingServiceInstance?.log("Screenshot guardado: $filename")
+            } else {
+                floatingServiceInstance?.log("ERROR: no se pudo crear URI en MediaStore")
+            }
+        } catch (e: Exception) {
+            floatingServiceInstance?.log("ERROR al guardar screenshot: ${e.message}")
         }
-    } catch (e: Exception) {
-        floatingServiceInstance?.log("ERROR al guardar screenshot: ${e.message}")
     }
-}
+
     private fun analyzeWithOCR(bitmap: Bitmap) {
         val image = InputImage.fromBitmap(bitmap, 0)
 
@@ -129,12 +141,6 @@ class UberAccessibilityService : AccessibilityService() {
             }
     }
 
-    /**
-     * Limpia errores OCR comunes.
-     * Paso 1: dentro de tarifa CLP (sin +) — l→1, I→1, O→0, Z→7
-     * Paso 2: normalizar ., y ,. a . en contextos numéricos (0.,2 → 0.2)
-     * Paso 3: l/I/O al inicio o dentro de número antes de min/km (l.7 km → 1.7 km)
-     */
     private fun cleanOcrText(text: String): String {
         // Paso 1: limpiar dentro de tarifa CLP (sin + adelante)
         var cleaned = text.replace(Regex("""(?<!\+)CLP([A-Za-z0-9,.]*)""")) { match ->
@@ -146,14 +152,28 @@ class UberAccessibilityService : AccessibilityService() {
             "CLP$inner"
         }
 
-        // Paso 2: normalizar ., y ,. a . en todo el texto
-        // Cubre casos como "0.,2 km" → "0.2 km"
+        // Paso 2: normalizar ., y ,. y .. a . en todo el texto
         cleaned = cleaned
             .replace(".,", ".")
             .replace(",.", ".")
+            .replace("..", ".")
 
-        // Paso 3: limpiar l/I/O en contexto numérico antes de min/km
-        // Cubre tanto "1l min" como "l.7 km" (l al inicio)
+        // Paso 3: normalizar knm → km
+        cleaned = cleaned.replace("knm", "km")
+
+        // Paso 4: normalizar " m)" → " km)" en contexto de pares
+        // Cubre "14.8 m)" → "14.8 km)" cuando OCR pierde la k
+        cleaned = cleaned.replace(Regex("""(\d+[.,]\d+)\s+m\)""")) { match ->
+            "${match.groupValues[1]} km)"
+        }
+
+        // Paso 5: limpiar letras antes de dígitos en contexto de minutos
+        // Cubre "h9 min" → "19 min"
+        cleaned = cleaned.replace(Regex("""[a-zA-Z](\d+)\s+min""")) { match ->
+            "${match.groupValues[1]} min"
+        }
+
+        // Paso 6: limpiar l/I/O al inicio o dentro de número antes de min/km
         cleaned = cleaned.replace(Regex("""([lIO\d][lIO\d.,]*)\s*(min|km)""")) { match ->
             val num = match.groupValues[1]
                 .replace('l', '1')
