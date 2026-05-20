@@ -113,6 +113,21 @@ class FloatingService : Service() {
         }
     }
 
+    /**
+     * Sube los círculos de Faro al tope del z-order.
+     * Público para que UberAccessibilityService lo llame
+     * cuando detecta que Uber Driver lanza su popup de solicitud.
+     */
+    fun bringOverlayToFront() {
+        try {
+            windowManager.removeView(overlayView)
+            windowManager.addView(overlayView, overlayParams)
+            log("Overlay subido al frente")
+        } catch (e: Exception) {
+            log("Error re-attach overlay: ${e.message}")
+        }
+    }
+
     private fun hideCircleText() {
         currentColorHora = COLOR_IDLE
         currentColorKm = COLOR_IDLE
