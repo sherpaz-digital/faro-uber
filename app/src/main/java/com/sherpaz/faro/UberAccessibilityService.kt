@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 import android.content.ContentValues
 import android.provider.MediaStore
 import java.text.SimpleDateFormat
@@ -36,14 +37,103 @@ class UberAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * Detecta cuando Uber Driver lanza su popup de solicitud
-     * y sube los círculos de Faro al tope del z-order inmediatamente.
+     * Detecta cuando Uber Driver lanza su popup de solicitud.
+     * 1. Sube los círculos al frente (z-order)
+     * 2. Intenta leer tarifa y min/km directamente del árbol de vistas
+     *    Si Uber no bloquea sus nodos, extrae los datos sin OCR (100% exacto)
+     *    Si Uber los bloquea, loguea el resultado y no hace nada más
+     *    El OCR sigue disponible como método manual via toque del círculo
      */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             event.packageName == "com.ubercab.driver") {
+
+            // Paso 1: subir overlay al frente (comportamiento existente)
             floatingServiceInstance?.bringOverlayToFront()
+
+            // Paso 2: intentar leer árbol de vistas
+            tryReadViewTree()
+        }
+    }
+
+    /**
+     * Recorre el árbol de vistas de Uber Driver buscando:
+     * - Tarifa: nodo con texto que empiece con "CLP"
+     * - Pares min/km: nodos con patrón "X min (Y km)"
+     *
+     * Loguea todo lo que encuentra para diagnóstico.
+     * Si extrae datos válidos, los muestra en los círculos directamente.
+     */
+    private fun tryReadViewTree() {
+        try {
+            val root = rootInActiveWindow
+            if (root == null) {
+                floatingServiceInstance?.log("ÁRBOL: rootInActiveWindow null")
+                return
+            }
+
+            if (root.packageName != "com.ubercab.driver") {
+                floatingServiceInstance?.log("ÁRBOL: ventana activa no es Uber (${root.packageName})")
+                root.recycle()
+                return
+            }
+
+            // Recolectar todos los textos visibles del árbol
+            val textos = mutableListOf<String>()
+            collectTexts(root, textos)
+            root.recycle()
+
+            if (textos.isEmpty()) {
+                floatingServiceInstance?.log("ÁRBOL: vacío — Uber probablemente bloquea sus nodos")
+                return
+            }
+
+            val textoCompleto = textos.joinToString("\n")
+            floatingServiceInstance?.log("ÁRBOL OK — textos encontrados (${textos.size} nodos):")
+            floatingServiceInstance?.log("ÁRBOL texto: ${textoCompleto.take(500)}")
+
+            // Intentar extraer datos con la misma lógica del OCR
+            val tripData = extractTripData(textoCompleto)
+            if (tripData != null) {
+                floatingServiceInstance?.log(
+                    "ÁRBOL datos — tarifa=${tripData.clpHora/60*1} " +
+                    "clpHora=${tripData.clpHora} clpKm=${tripData.clpKm} " +
+                    "min=${tripData.minTotales} km=${tripData.kmTotales}"
+                )
+                Handler(Looper.getMainLooper()).post {
+                    floatingServiceInstance?.updateCircles(
+                        tripData.clpHora,
+                        tripData.clpKm,
+                        tripData.clpMin,
+                        tripData.minTotales,
+                        tripData.kmTotales
+                    )
+                }
+            } else {
+                floatingServiceInstance?.log("ÁRBOL: texto encontrado pero no se pudieron extraer datos de viaje")
+            }
+
+        } catch (e: Exception) {
+            floatingServiceInstance?.log("ÁRBOL error: ${e.message}")
+        }
+    }
+
+    /**
+     * Recorre recursivamente el árbol de vistas y recolecta
+     * todos los textos no vacíos de los nodos.
+     */
+    private fun collectTexts(node: AccessibilityNodeInfo, result: MutableList<String>) {
+        val text = node.text?.toString()
+        val desc = node.contentDescription?.toString()
+
+        if (!text.isNullOrBlank()) result.add(text.trim())
+        if (!desc.isNullOrBlank() && desc != text) result.add(desc.trim())
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectTexts(child, result)
+            child.recycle()
         }
     }
 
@@ -162,13 +252,11 @@ class UberAccessibilityService : AccessibilityService() {
         cleaned = cleaned.replace("knm", "km")
 
         // Paso 4: normalizar " m)" → " km)" en contexto de pares
-        // Cubre "14.8 m)" → "14.8 km)" cuando OCR pierde la k
         cleaned = cleaned.replace(Regex("""(\d+[.,]\d+)\s+m\)""")) { match ->
             "${match.groupValues[1]} km)"
         }
 
         // Paso 5: limpiar letras antes de dígitos en contexto de minutos
-        // Cubre "h9 min" → "19 min"
         cleaned = cleaned.replace(Regex("""[a-zA-Z](\d+)\s+min""")) { match ->
             "${match.groupValues[1]} min"
         }
