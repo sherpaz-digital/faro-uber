@@ -42,12 +42,14 @@ class FloatingService : Service() {
     companion object {
         const val CHANNEL_ID = "faro_channel_v3"
         const val NOTIF_ID = 1
-        const val COLOR_IDLE   = 0xFF666666.toInt()
-        const val COLOR_RED    = 0xFFe03030.toInt()
-        const val COLOR_YELLOW = 0xFFf5d800.toInt()
-        const val COLOR_GREEN  = 0xFF1a9e3a.toInt()
-        const val COLOR_PURPLE = 0xFF7c2fc8.toInt()
-        const val COLOR_BLUE   = 0xFF2979FF.toInt()
+        const val COLOR_IDLE     = 0xFF666666.toInt()
+        const val COLOR_RED      = 0xFFe03030.toInt()
+        const val COLOR_YELLOW   = 0xFFf5d800.toInt()
+        const val COLOR_GREEN    = 0xFF1a9e3a.toInt()
+        const val COLOR_PURPLE   = 0xFF7c2fc8.toInt()
+        const val COLOR_BLUE     = 0xFF2979FF.toInt()
+        const val COLOR_ZONE_ON  = 0xFFFFFFFF.toInt()  // blanco — en zona
+        const val COLOR_ZONE_OFF = 0xFF333333.toInt()  // gris — fuera de zona
 
         var floatingServiceInstance: FloatingService? = null
     }
@@ -72,6 +74,13 @@ class FloatingService : Service() {
         tramoVerde    = prefs.getInt("tramo_verde", 14999)
         tramoMorado   = prefs.getInt("tramo_morado", 19999)
         log("Tramos cargados — rojo≤$tramoRojo amarillo≤$tramoAmarillo verde≤$tramoVerde morado≤$tramoMorado azul>${tramoMorado}")
+    }
+
+    /** Devuelve el set de comunas de zona guardado en SharedPreferences */
+    fun getComunasZona(): Set<String> {
+        val prefs = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
+        val raw = prefs.getString("zona_comunas", "") ?: ""
+        return if (raw.isBlank()) emptySet() else raw.split("|").toSet()
     }
 
     override fun onCreate() {
@@ -113,11 +122,6 @@ class FloatingService : Service() {
         }
     }
 
-    /**
-     * Sube los círculos de Faro al tope del z-order.
-     * Público para que UberAccessibilityService lo llame
-     * cuando detecta que Uber Driver lanza su popup de solicitud.
-     */
     fun bringOverlayToFront() {
         try {
             windowManager.removeView(overlayView)
@@ -126,6 +130,26 @@ class FloatingService : Service() {
         } catch (e: Exception) {
             log("Error re-attach overlay: ${e.message}")
         }
+    }
+
+    /** Pinta el anillo de zona blanco (en zona) o gris (fuera de zona) */
+    private fun setZoneIndicator(view: View, enZona: Boolean) {
+        view.background = GradientDrawable().apply {
+            shape = GradientDrawable.OVAL
+            setColor(0x00000000)  // fondo transparente — solo el borde importa
+            setStroke(3, if (enZona) COLOR_ZONE_ON else COLOR_ZONE_OFF)
+        }
+    }
+
+    /**
+     * Actualiza los indicadores de zona (anillos blancos/grises).
+     * origenEnZona  → anillo del círculo superior ($/hora)
+     * destinoEnZona → anillo del círculo inferior ($/km)
+     */
+    fun updateZoneIndicators(origenEnZona: Boolean, destinoEnZona: Boolean) {
+        setZoneIndicator(overlayView.findViewById(R.id.circleHoraZone), origenEnZona)
+        setZoneIndicator(overlayView.findViewById(R.id.circleKmZone), destinoEnZona)
+        log("Zona — origen:${if (origenEnZona) "✓" else "✗"} destino:${if (destinoEnZona) "✓" else "✗"}")
     }
 
     private fun hideCircleText() {
@@ -213,16 +237,24 @@ class FloatingService : Service() {
 
     private fun toggleSize() {
         isSmall = !isSmall
-        val targetPx = dpToPx(if (isSmall) smallSize else normalSize)
+        val targetPx     = dpToPx(if (isSmall) smallSize else normalSize)
+        val targetZonePx = dpToPx(if (isSmall) smallSize + 8 else normalSize + 8)
         val targetTextMain = if (isSmall) 16f else 22f
-        val targetTextSub = if (isSmall) 10f else 14f
+        val targetTextSub  = if (isSmall) 10f else 14f
 
         listOf(R.id.circleHora, R.id.circleKm).forEach { id ->
             val circle = overlayView.findViewById<FrameLayout>(id)
             val lp = circle.layoutParams
-            lp.width = targetPx
-            lp.height = targetPx
+            lp.width = targetPx; lp.height = targetPx
             circle.layoutParams = lp
+        }
+
+        // Ajustar también los anillos de zona
+        listOf(R.id.circleHoraZone, R.id.circleKmZone).forEach { id ->
+            val zone = overlayView.findViewById<View>(id)
+            val lp = zone.layoutParams
+            lp.width = targetZonePx; lp.height = targetZonePx
+            zone.layoutParams = lp
         }
 
         overlayView.findViewById<TextView>(R.id.tvClpMin).textSize = targetTextSub
@@ -292,6 +324,8 @@ class FloatingService : Service() {
         overlayView.findViewById<TextView>(R.id.tvKm).text = "—"
         overlayView.findViewById<TextView>(R.id.tvMinutos).text = ""
         overlayView.findViewById<TextView>(R.id.tvKmTotal).text = ""
+        // Reset indicadores de zona a gris
+        updateZoneIndicators(false, false)
     }
 
     private fun colorHora(v: Int) = when {
