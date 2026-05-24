@@ -5,106 +5,76 @@
     android:orientation="vertical"
     android:gravity="center_horizontal">
 
-    <!-- CÍRCULO SUPERIOR — Tiempo -->
     <FrameLayout
-        android:layout_width="118dp"
-        android:layout_height="118dp"
+        android:id="@+id/circleHora"
+        android:layout_width="110dp"
+        android:layout_height="110dp"
         android:layout_marginBottom="8dp">
-
-        <!-- Borde zona (anillo blanco delgado) — encima del borde semáforo -->
-        <View
-            android:id="@+id/circleHoraZone"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:layout_gravity="center"/>
-
-        <!-- Círculo principal semáforo -->
-        <FrameLayout
-            android:id="@+id/circleHora"
-            android:layout_width="110dp"
-            android:layout_height="110dp"
-            android:layout_gravity="center">
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:orientation="vertical"
-                android:gravity="center">
-                <TextView
-                    android:id="@+id/tvClpMin"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text=""
-                    android:textColor="#CCCCCC"
-                    android:textSize="14sp"
-                    android:gravity="center"
-                    android:maxLines="1"/>
-                <TextView
-                    android:id="@+id/tvHora"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="—"
-                    android:textColor="#FFFFFF"
-                    android:textSize="22sp"
-                    android:textStyle="bold"
-                    android:gravity="center"
-                    android:maxLines="1"/>
-                <TextView
-                    android:id="@+id/tvMinutos"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text=""
-                    android:textColor="#CCCCCC"
-                    android:textSize="14sp"
-                    android:gravity="center"
-                    android:maxLines="1"/>
-            </LinearLayout>
-        </FrameLayout>
+            android:orientation="vertical"
+            android:gravity="center">
+            <TextView
+                android:id="@+id/tvClpMin"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="#CCCCCC"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:maxLines="1"/>
+            <TextView
+                android:id="@+id/tvHora"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="—"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:maxLines="1"/>
+            <TextView
+                android:id="@+id/tvMinutos"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="#CCCCCC"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:maxLines="1"/>
+        </LinearLayout>
     </FrameLayout>
 
-    <!-- CÍRCULO INFERIOR — Distancia -->
     <FrameLayout
-        android:layout_width="118dp"
-        android:layout_height="118dp">
-
-        <!-- Borde zona (anillo blanco delgado) -->
-        <View
-            android:id="@+id/circleKmZone"
+        android:id="@+id/circleKm"
+        android:layout_width="110dp"
+        android:layout_height="110dp">
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:layout_gravity="center"/>
-
-        <!-- Círculo principal semáforo -->
-        <FrameLayout
-            android:id="@+id/circleKm"
-            android:layout_width="110dp"
-            android:layout_height="110dp"
-            android:layout_gravity="center">
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:orientation="vertical"
-                android:gravity="center">
-                <TextView
-                    android:id="@+id/tvKm"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="—"
-                    android:textColor="#FFFFFF"
-                    android:textSize="22sp"
-                    android:textStyle="bold"
-                    android:gravity="center"
-                    android:maxLines="1"/>
-                <TextView
-                    android:id="@+id/tvKmTotal"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text=""
-                    android:textColor="#CCCCCC"
-                    android:textSize="14sp"
-                    android:gravity="center"
-                    android:maxLines="1"/>
-            </LinearLayout>
-        </FrameLayout>
+            android:orientation="vertical"
+            android:gravity="center">
+            <TextView
+                android:id="@+id/tvKm"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="—"
+                android:textColor="#FFFFFF"
+                android:textSize="22sp"
+                android:textStyle="bold"
+                android:gravity="center"
+                android:maxLines="1"/>
+            <TextView
+                android:id="@+id/tvKmTotal"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text=""
+                android:textColor="#CCCCCC"
+                android:textSize="14sp"
+                android:gravity="center"
+                android:maxLines="1"/>
+        </LinearLayout>
     </FrameLayout>
 
 </LinearLayout>
