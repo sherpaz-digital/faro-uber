@@ -5,7 +5,6 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.view.accessibility.AccessibilityEvent
-import android.view.accessibility.AccessibilityNodeInfo
 import android.content.ContentValues
 import android.provider.MediaStore
 import java.text.SimpleDateFormat
@@ -36,78 +35,15 @@ class UberAccessibilityService : AccessibilityService() {
         currentInstance = null
     }
 
+    /**
+     * Detecta cuando Uber Driver lanza su popup de solicitud
+     * y sube los círculos de Faro al tope del z-order inmediatamente.
+     */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             event.packageName == "com.ubercab.driver") {
-
             floatingServiceInstance?.bringOverlayToFront()
-            tryReadViewTree()
-        }
-    }
-
-    private fun tryReadViewTree() {
-        try {
-            val root = rootInActiveWindow
-            if (root == null) {
-                floatingServiceInstance?.log("ÁRBOL: rootInActiveWindow null")
-                return
-            }
-
-            if (root.packageName != "com.ubercab.driver") {
-                floatingServiceInstance?.log("ÁRBOL: ventana activa no es Uber (${root.packageName})")
-                root.recycle()
-                return
-            }
-
-            val textos = mutableListOf<String>()
-            collectTexts(root, textos)
-            root.recycle()
-
-            if (textos.isEmpty()) {
-                floatingServiceInstance?.log("ÁRBOL: vacío — Uber probablemente bloquea sus nodos")
-                return
-            }
-
-            val textoCompleto = textos.joinToString("\n")
-            floatingServiceInstance?.log("ÁRBOL OK — textos encontrados (${textos.size} nodos):")
-            floatingServiceInstance?.log("ÁRBOL texto: ${textoCompleto.take(500)}")
-
-            val tripData = extractTripData(textoCompleto)
-            if (tripData != null) {
-                floatingServiceInstance?.log(
-                    "ÁRBOL datos — clpHora=${tripData.clpHora} clpKm=${tripData.clpKm} " +
-                    "min=${tripData.minTotales} km=${tripData.kmTotales}"
-                )
-                Handler(Looper.getMainLooper()).post {
-                    floatingServiceInstance?.updateCircles(
-                        tripData.clpHora,
-                        tripData.clpKm,
-                        tripData.clpMin,
-                        tripData.minTotales,
-                        tripData.kmTotales
-                    )
-                }
-            } else {
-                floatingServiceInstance?.log("ÁRBOL: texto encontrado pero no se pudieron extraer datos de viaje")
-            }
-
-        } catch (e: Exception) {
-            floatingServiceInstance?.log("ÁRBOL error: ${e.message}")
-        }
-    }
-
-    private fun collectTexts(node: AccessibilityNodeInfo, result: MutableList<String>) {
-        val text = node.text?.toString()
-        val desc = node.contentDescription?.toString()
-
-        if (!text.isNullOrBlank()) result.add(text.trim())
-        if (!desc.isNullOrBlank() && desc != text) result.add(desc.trim())
-
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i) ?: continue
-            collectTexts(child, result)
-            child.recycle()
         }
     }
 
@@ -128,6 +64,7 @@ class UberAccessibilityService : AccessibilityService() {
                     if (bitmap != null) {
                         floatingServiceInstance?.log("Captura OK: ${bitmap.width}x${bitmap.height}")
 
+                        // Recortar el 80% inferior — cubre paneles altos de solicitud
                         val cropTop = (bitmap.height * 0.20).toInt()
                         val cropped = Bitmap.createBitmap(
                             bitmap, 0, cropTop, bitmap.width, bitmap.height - cropTop
@@ -190,16 +127,6 @@ class UberAccessibilityService : AccessibilityService() {
                             tripData.minTotales,
                             tripData.kmTotales
                         )
-                        // Verificar zona y actualizar indicadores
-                        val comunas = floatingServiceInstance?.getComunasZona() ?: emptySet()
-                        val origenEnZona  = comunas.any { tripData.origenComuna.contains(it) }
-                        val destinoEnZona = comunas.any { tripData.destinoComuna.contains(it) }
-                        floatingServiceInstance?.updateZoneIndicators(origenEnZona, destinoEnZona)
-                        floatingServiceInstance?.log(
-                            "Zona — comunas:$comunas | " +
-                            "origen:\"${tripData.origenComuna}\" (${if (origenEnZona) "✓" else "✗"}) | " +
-                            "destino:\"${tripData.destinoComuna}\" (${if (destinoEnZona) "✓" else "✗"})"
-                        )
                     } else {
                         floatingServiceInstance?.log("No se encontraron datos de viaje en OCR")
                         floatingServiceInstance?.showErrorPublic("E:OCR")
@@ -215,6 +142,7 @@ class UberAccessibilityService : AccessibilityService() {
     }
 
     private fun cleanOcrText(text: String): String {
+        // Paso 1: limpiar dentro de tarifa CLP (sin + adelante)
         var cleaned = text.replace(Regex("""(?<!\+)CLP([A-Za-z0-9,.]*)""")) { match ->
             val inner = match.groupValues[1]
                 .replace('l', '1')
@@ -223,14 +151,29 @@ class UberAccessibilityService : AccessibilityService() {
                 .replace('Z', '7')
             "CLP$inner"
         }
-        cleaned = cleaned.replace(".,", ".").replace(",.", ".").replace("..", ".")
+
+        // Paso 2: normalizar ., y ,. y .. a . en todo el texto
+        cleaned = cleaned
+            .replace(".,", ".")
+            .replace(",.", ".")
+            .replace("..", ".")
+
+        // Paso 3: normalizar knm → km
         cleaned = cleaned.replace("knm", "km")
+
+        // Paso 4: normalizar " m)" → " km)" en contexto de pares
+        // Cubre "14.8 m)" → "14.8 km)" cuando OCR pierde la k
         cleaned = cleaned.replace(Regex("""(\d+[.,]\d+)\s+m\)""")) { match ->
             "${match.groupValues[1]} km)"
         }
+
+        // Paso 5: limpiar letras antes de dígitos en contexto de minutos
+        // Cubre "h9 min" → "19 min"
         cleaned = cleaned.replace(Regex("""[a-zA-Z](\d+)\s+min""")) { match ->
             "${match.groupValues[1]} min"
         }
+
+        // Paso 6: limpiar l/I/O al inicio o dentro de número antes de min/km
         cleaned = cleaned.replace(Regex("""([lIO\d][lIO\d.,]*)\s*(min|km)""")) { match ->
             val num = match.groupValues[1]
                 .replace('l', '1')
@@ -239,34 +182,15 @@ class UberAccessibilityService : AccessibilityService() {
             val unit = match.groupValues[2]
             "$num $unit"
         }
+
         return cleaned
     }
 
     private fun parseCLP(raw: String): Int {
-        val clean = raw.replace(".", "").replace(",", "")
+        val clean = raw
+            .replace(".", "")
+            .replace(",", "")
         return clean.toIntOrNull() ?: 0
-    }
-
-    /**
-     * Extrae la comuna de una línea de dirección.
-     * Las direcciones de Uber tienen formato: "Calle X 1234, Comuna, Ciudad"
-     * La comuna es el penúltimo segmento separado por coma.
-     */
-    private fun extractComuna(addressLine: String): String {
-        val partes = addressLine.split(",").map { it.trim() }
-        return if (partes.size >= 2) partes[partes.size - 2].lowercase() else ""
-    }
-
-    /**
-     * Busca las líneas de dirección en el texto OCR.
-     * Retorna par (origenComuna, destinoComuna).
-     */
-    private fun extractComunas(text: String): Pair<String, String> {
-        val addressRegex = Regex("""[A-ZÁÉÍÓÚÑ][^,\n]+,\s*[A-ZÁÉÍÓÚÑ][^,\n]+,\s*[A-ZÁÉÍÓÚÑ][^\n]+""")
-        val direcciones = addressRegex.findAll(text).map { it.value }.toList()
-        val origen  = if (direcciones.isNotEmpty()) extractComuna(direcciones[0]) else ""
-        val destino = if (direcciones.size >= 2)    extractComuna(direcciones[1]) else ""
-        return Pair(origen, destino)
     }
 
     private fun extractTripData(rawText: String): TripData? {
@@ -274,6 +198,7 @@ class UberAccessibilityService : AccessibilityService() {
             val text = cleanOcrText(rawText)
             floatingServiceInstance?.log("Texto limpio: ${text.take(500)}")
 
+            // Tarifa — solo CLP sin + adelante (excluye bonos +CLP)
             val tarifaRegex = Regex("""(?<!\+)CLP\s*(\d[\d,]*)""")
             val tarifaStr = tarifaRegex.find(text)?.groupValues?.get(1) ?: run {
                 floatingServiceInstance?.log("No se encontró tarifa CLP (sin +)")
@@ -285,9 +210,11 @@ class UberAccessibilityService : AccessibilityService() {
                 return null
             }
 
+            // Pares "X min (Y,Z km)" — regex principal con decimal
             val parRegex = Regex("""(\d+)\s*min\s*\((\d+[.,]\d+)\s*km\)""")
             var pares = parRegex.findAll(text).toList()
 
+            // Fallback — regex sin decimal obligatorio
             if (pares.size < 2) {
                 floatingServiceInstance?.log("Pares con decimal insuficientes (${pares.size}), probando fallback")
                 val fallbackRegex = Regex("""(\d+)\s*min\s*\((\d+(?:[.,]\d+)?)\s*km\)""")
@@ -304,6 +231,7 @@ class UberAccessibilityService : AccessibilityService() {
             val minViaje  = pares[1].groupValues[1].toInt()
             var kmViaje   = pares[1].groupValues[2].replace(",", ".").toDouble()
 
+            // Fallback: si OCR perdió el decimal y km >= 50, dividir por 10
             if (kmBuscar >= 50) {
                 floatingServiceInstance?.log("kmBuscar=$kmBuscar sospechoso (>=50), dividiendo por 10")
                 kmBuscar /= 10.0
@@ -313,26 +241,20 @@ class UberAccessibilityService : AccessibilityService() {
                 kmViaje /= 10.0
             }
 
-            // Extraer comunas de origen y destino del texto OCR original
-            val (origenComuna, destinoComuna) = extractComunas(rawText)
-
             floatingServiceInstance?.log(
                 "Datos extraídos — tarifa=$tarifa " +
-                "buscar=${minBuscar}min/${kmBuscar}km viaje=${minViaje}min/${kmViaje}km " +
-                "origen=\"$origenComuna\" destino=\"$destinoComuna\""
+                "buscar=${minBuscar}min/${kmBuscar}km viaje=${minViaje}min/${kmViaje}km"
             )
 
             val totalMin = (minBuscar + minViaje).toDouble().coerceAtLeast(1.0)
             val totalKm  = (kmBuscar + kmViaje).coerceAtLeast(0.1)
 
             TripData(
-                clpHora       = ((tarifa / totalMin) * 60).toInt(),
-                clpKm         = (tarifa / totalKm).toInt(),
-                clpMin        = (tarifa / totalMin).toInt(),
-                minTotales    = minBuscar + minViaje,
-                kmTotales     = kmBuscar + kmViaje,
-                origenComuna  = origenComuna,
-                destinoComuna = destinoComuna
+                clpHora    = ((tarifa / totalMin) * 60).toInt(),
+                clpKm      = (tarifa / totalKm).toInt(),
+                clpMin     = (tarifa / totalMin).toInt(),
+                minTotales = minBuscar + minViaje,
+                kmTotales  = kmBuscar + kmViaje
             )
         } catch (e: Exception) {
             floatingServiceInstance?.log("Excepción en extracción: ${e.message}")
@@ -346,7 +268,5 @@ data class TripData(
     val clpKm: Int,
     val clpMin: Int,
     val minTotales: Int,
-    val kmTotales: Double,
-    val origenComuna: String = "",
-    val destinoComuna: String = ""
+    val kmTotales: Double
 )
