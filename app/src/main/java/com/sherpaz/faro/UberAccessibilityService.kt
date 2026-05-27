@@ -44,6 +44,12 @@ class UberAccessibilityService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
             event.packageName == "com.ubercab.driver") {
             floatingServiceInstance?.bringOverlayToFront()
+            val fs = floatingServiceInstance
+    if (fs != null && !fs.isAnalyzingPublic()) {
+        fs.setAnalyzingTrue()
+        Handler(Looper.getMainLooper()).postDelayed({
+            currentInstance?.captureAndAnalyze()
+        }, 800)
         }
     }
 
