@@ -40,18 +40,19 @@ class UberAccessibilityService : AccessibilityService() {
      * y sube los círculos de Faro al tope del z-order inmediatamente.
      */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (event == null) return
-        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-            event.packageName == "com.ubercab.driver") {
+    if (event == null) return
+    if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+        event.packageName == "com.ubercab.driver") {
             floatingServiceInstance?.bringOverlayToFront()
             val fs = floatingServiceInstance
-    if (fs != null && !fs.isAnalyzingPublic()) {
-        fs.setAnalyzingTrue()
-        Handler(Looper.getMainLooper()).postDelayed({
-            currentInstance?.captureAndAnalyze()
-        }, 800)
-        }
+            if (fs != null && !fs.isAnalyzingPublic()) {
+                fs.setAnalyzingTrue()
+                Handler(Looper.getMainLooper()).postDelayed({
+                    currentInstance?.captureAndAnalyze()
+                }, 800)
+            }
     }
+}
 
     override fun onInterrupt() {}
 
