@@ -21,6 +21,8 @@ class UberAccessibilityService : AccessibilityService() {
         var currentInstance: UberAccessibilityService? = null
     }
 
+    private var lastAutoCapture = 0L
+
     private val recognizer by lazy {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
     }
@@ -40,19 +42,21 @@ class UberAccessibilityService : AccessibilityService() {
      * y sube los círculos de Faro al tope del z-order inmediatamente.
      */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-    if (event == null) return
-    if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
-        event.packageName == "com.ubercab.driver") {
-            floatingServiceInstance?.bringOverlayToFront()
-            val fs = floatingServiceInstance
-            if (fs != null && !fs.isAnalyzingPublic()) {
-                fs.setAnalyzingTrue()
-                Handler(Looper.getMainLooper()).postDelayed({
-                    currentInstance?.captureAndAnalyze()
-                }, 800)
-            }
+        if (event == null) return
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
+            event.packageName == "com.ubercab.driver") {
+                floatingServiceInstance?.bringOverlayToFront()
+                val now = System.currentTimeMillis()
+                val fs = floatingServiceInstance
+                if (fs != null && !fs.isAnalyzingPublic() && (now - lastAutoCapture) > 15000) {
+                    lastAutoCapture = now
+                    fs.setAnalyzingTrue()
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        currentInstance?.captureAndAnalyze()
+                    }, 800)
+                }
+        }
     }
-}
 
     override fun onInterrupt() {}
 
