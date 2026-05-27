@@ -242,6 +242,8 @@ class FloatingService : Service() {
 
     fun showErrorPublic(code: String) = showError(code)
     fun setAnalyzingDone() { isAnalyzing = false }
+fun isAnalyzingPublic(): Boolean = isAnalyzing
+fun setAnalyzingTrue() { isAnalyzing = true }
 
     private fun showError(code: String) {
         scope.launch(Dispatchers.Main) {
