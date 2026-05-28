@@ -35,10 +35,6 @@ class UberAccessibilityService : AccessibilityService() {
         currentInstance = null
     }
 
-    /**
-     * Detecta cuando Uber Driver lanza su popup de solicitud
-     * y sube los círculos de Faro al tope del z-order inmediatamente.
-     */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED &&
@@ -64,7 +60,6 @@ class UberAccessibilityService : AccessibilityService() {
                     if (bitmap != null) {
                         floatingServiceInstance?.log("Captura OK: ${bitmap.width}x${bitmap.height}")
 
-                        // Recortar el 80% inferior — cubre paneles altos de solicitud
                         val cropTop = (bitmap.height * 0.20).toInt()
                         val cropped = Bitmap.createBitmap(
                             bitmap, 0, cropTop, bitmap.width, bitmap.height - cropTop
@@ -142,7 +137,6 @@ class UberAccessibilityService : AccessibilityService() {
     }
 
     private fun cleanOcrText(text: String): String {
-        // Paso 1: limpiar dentro de tarifa CLP (sin + adelante)
         var cleaned = text.replace(Regex("""(?<!\+)CLP([A-Za-z0-9,.]*)""")) { match ->
             val inner = match.groupValues[1]
                 .replace('l', '1')
@@ -152,28 +146,21 @@ class UberAccessibilityService : AccessibilityService() {
             "CLP$inner"
         }
 
-        // Paso 2: normalizar ., y ,. y .. a . en todo el texto
         cleaned = cleaned
             .replace(".,", ".")
             .replace(",.", ".")
             .replace("..", ".")
 
-        // Paso 3: normalizar knm → km
         cleaned = cleaned.replace("knm", "km")
 
-        // Paso 4: normalizar " m)" → " km)" en contexto de pares
-        // Cubre "14.8 m)" → "14.8 km)" cuando OCR pierde la k
         cleaned = cleaned.replace(Regex("""(\d+[.,]\d+)\s+m\)""")) { match ->
             "${match.groupValues[1]} km)"
         }
 
-        // Paso 5: limpiar letras antes de dígitos en contexto de minutos
-        // Cubre "h9 min" → "19 min"
         cleaned = cleaned.replace(Regex("""[a-zA-Z](\d+)\s+min""")) { match ->
             "${match.groupValues[1]} min"
         }
 
-        // Paso 6: limpiar l/I/O al inicio o dentro de número antes de min/km
         cleaned = cleaned.replace(Regex("""([lIO\d][lIO\d.,]*)\s*(min|km)""")) { match ->
             val num = match.groupValues[1]
                 .replace('l', '1')
@@ -190,7 +177,13 @@ class UberAccessibilityService : AccessibilityService() {
         val clean = raw
             .replace(".", "")
             .replace(",", "")
-        return clean.toIntOrNull() ?: 0
+        val value = clean.toIntOrNull() ?: 0
+        // Tarifa con más de 5 dígitos = OCR insertó dígito extra — descartar
+        if (value > 99999) {
+            floatingServiceInstance?.log("Tarifa sospechosa descartada: $value (>99999)")
+            return 0
+        }
+        return value
     }
 
     private fun extractTripData(rawText: String): TripData? {
@@ -198,7 +191,6 @@ class UberAccessibilityService : AccessibilityService() {
             val text = cleanOcrText(rawText)
             floatingServiceInstance?.log("Texto limpio: ${text.take(500)}")
 
-            // Tarifa — solo CLP sin + adelante (excluye bonos +CLP)
             val tarifaRegex = Regex("""(?<!\+)CLP\s*(\d[\d,]*)""")
             val tarifaStr = tarifaRegex.find(text)?.groupValues?.get(1) ?: run {
                 floatingServiceInstance?.log("No se encontró tarifa CLP (sin +)")
@@ -210,11 +202,9 @@ class UberAccessibilityService : AccessibilityService() {
                 return null
             }
 
-            // Pares "X min (Y,Z km)" — regex principal con decimal
             val parRegex = Regex("""(\d+)\s*min\s*\((\d+[.,]\d+)\s*km\)""")
             var pares = parRegex.findAll(text).toList()
 
-            // Fallback — regex sin decimal obligatorio
             if (pares.size < 2) {
                 floatingServiceInstance?.log("Pares con decimal insuficientes (${pares.size}), probando fallback")
                 val fallbackRegex = Regex("""(\d+)\s*min\s*\((\d+(?:[.,]\d+)?)\s*km\)""")
@@ -231,7 +221,6 @@ class UberAccessibilityService : AccessibilityService() {
             val minViaje  = pares[1].groupValues[1].toInt()
             var kmViaje   = pares[1].groupValues[2].replace(",", ".").toDouble()
 
-            // Fallback: si OCR perdió el decimal y km >= 50, dividir por 10
             if (kmBuscar >= 50) {
                 floatingServiceInstance?.log("kmBuscar=$kmBuscar sospechoso (>=50), dividiendo por 10")
                 kmBuscar /= 10.0
