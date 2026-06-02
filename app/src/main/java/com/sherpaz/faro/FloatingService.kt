@@ -257,30 +257,49 @@ class FloatingService : Service() {
     }
 
     fun updateCircles(clpHora: Int, clpKm: Int, clpMin: Int, minTotales: Int, kmTotales: Double) {
-        currentColorHora = colorHora(clpHora)
-        currentColorKm = colorKm(clpKm)
+    currentColorHora = colorHora(clpHora)
+    currentColorKm = colorKm(clpKm)
 
-        setCircleColor(overlayView.findViewById(R.id.circleHora), currentColorHora)
-        setCircleColor(overlayView.findViewById(R.id.circleKm), currentColorKm)
+    setCircleColor(overlayView.findViewById(R.id.circleHora), currentColorHora)
+    setCircleColor(overlayView.findViewById(R.id.circleKm), currentColorKm)
 
-        overlayView.findViewById<TextView>(R.id.tvClpMin).text = fmt.format(clpMin)
-        overlayView.findViewById<TextView>(R.id.tvHora).text = fmt.format(clpHora)
-        overlayView.findViewById<TextView>(R.id.tvKm).text = fmt.format(clpKm)
+    val prefs = getSharedPreferences("faro_prefs", Context.MODE_PRIVATE)
+    val tiempoArriba = prefs.getString("ind_tiempo_arriba", "$/min")
+    val tiempoCentro = prefs.getString("ind_tiempo_centro", "$/hora")
+    val tiempoAbajo  = prefs.getString("ind_tiempo_abajo",  "Total min")
+    val distCentro   = prefs.getString("ind_dist_centro",   "$/km")
+    val distAbajo    = prefs.getString("ind_dist_abajo",    "Total km")
 
-        val kmStr = if (kmTotales == kmTotales.toLong().toDouble())
-            kmTotales.toLong().toString()
-        else
-            String.format("%.1f", kmTotales)
+    val kmStr = if (kmTotales == kmTotales.toLong().toDouble())
+        kmTotales.toLong().toString()
+    else
+        String.format("%.1f", kmTotales)
 
-        overlayView.findViewById<TextView>(R.id.tvMinutos).text = "$minTotales min"
-        overlayView.findViewById<TextView>(R.id.tvKmTotal).text = "$kmStr km"
-
-        resetJob?.cancel()
-        resetJob = scope.launch(Dispatchers.Main) {
-            delay(7000)
-            resetCircles()
-        }
+    fun valorTiempo(ind: String?) = when (ind) {
+        "$/min"     -> fmt.format(clpMin)
+        "$/hora"    -> fmt.format(clpHora)
+        "Total min" -> "$minTotales min"
+        else        -> ""
     }
+
+    fun valorDist(ind: String?) = when (ind) {
+        "$/km"    -> fmt.format(clpKm)
+        "Total km"-> "$kmStr km"
+        else      -> ""
+    }
+
+    overlayView.findViewById<TextView>(R.id.tvClpMin).text  = valorTiempo(tiempoArriba)
+    overlayView.findViewById<TextView>(R.id.tvHora).text    = valorTiempo(tiempoCentro)
+    overlayView.findViewById<TextView>(R.id.tvMinutos).text = valorTiempo(tiempoAbajo)
+    overlayView.findViewById<TextView>(R.id.tvKm).text      = valorDist(distCentro)
+    overlayView.findViewById<TextView>(R.id.tvKmTotal).text = valorDist(distAbajo)
+
+    resetJob?.cancel()
+    resetJob = scope.launch(Dispatchers.Main) {
+        delay(7000)
+        resetCircles()
+    }
+}
 
     fun resetCircles() {
         currentColorHora = COLOR_IDLE
