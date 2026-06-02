@@ -5,13 +5,11 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
-import android.view.View
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 
 class MainActivity : AppCompatActivity() {
 
-    // Opciones de cada círculo
     private val opcionesTiempo = listOf("$/min", "$/hora", "Total min", "ninguno")
     private val opcionesDist   = listOf("$/km", "Total km", "ninguno")
 
@@ -31,11 +29,10 @@ class MainActivity : AppCompatActivity() {
         etVerde.setText(prefs.getInt("tramo_verde", 14999).toString())
         etMorado.setText(prefs.getInt("tramo_morado", 19999).toString())
 
-        // --- Spinners indicadores ---
+        // --- Spinners ---
         val spinTiempoArriba = findViewById<Spinner>(R.id.spinTiempoArriba)
         val spinTiempoCentro = findViewById<Spinner>(R.id.spinTiempoCentro)
         val spinTiempoAbajo  = findViewById<Spinner>(R.id.spinTiempoAbajo)
-        val spinDistArriba   = findViewById<Spinner>(R.id.spinDistArriba)
         val spinDistCentro   = findViewById<Spinner>(R.id.spinDistCentro)
         val spinDistAbajo    = findViewById<Spinner>(R.id.spinDistAbajo)
 
@@ -48,24 +45,20 @@ class MainActivity : AppCompatActivity() {
         spinTiempoArriba.adapter = makeAdapter(opcionesTiempo)
         spinTiempoCentro.adapter = makeAdapter(opcionesTiempo)
         spinTiempoAbajo.adapter  = makeAdapter(opcionesTiempo)
-        spinDistArriba.adapter   = makeAdapter(opcionesDist)
         spinDistCentro.adapter   = makeAdapter(opcionesDist)
         spinDistAbajo.adapter    = makeAdapter(opcionesDist)
 
         // Cargar valores guardados (defaults = comportamiento actual)
-        spinTiempoArriba.setSelection(opcionesTiempo.indexOf(prefs.getString("ind_tiempo_arriba", "$/min")))
-        spinTiempoCentro.setSelection(opcionesTiempo.indexOf(prefs.getString("ind_tiempo_centro", "$/hora")))
-        spinTiempoAbajo.setSelection(opcionesTiempo.indexOf(prefs.getString("ind_tiempo_abajo", "Total min")))
-        spinDistArriba.setSelection(opcionesDist.indexOf(prefs.getString("ind_dist_arriba", "ninguno")))
-        spinDistCentro.setSelection(opcionesDist.indexOf(prefs.getString("ind_dist_centro", "$/km")))
-        spinDistAbajo.setSelection(opcionesDist.indexOf(prefs.getString("ind_dist_abajo", "Total km")))
+        spinTiempoArriba.setSelection(opcionesTiempo.indexOf(prefs.getString("ind_tiempo_arriba", "$/min")).coerceAtLeast(0))
+        spinTiempoCentro.setSelection(opcionesTiempo.indexOf(prefs.getString("ind_tiempo_centro", "$/hora")).coerceAtLeast(0))
+        spinTiempoAbajo.setSelection(opcionesTiempo.indexOf(prefs.getString("ind_tiempo_abajo", "Total min")).coerceAtLeast(0))
+        spinDistCentro.setSelection(opcionesDist.indexOf(prefs.getString("ind_dist_centro", "$/km")).coerceAtLeast(0))
+        spinDistAbajo.setSelection(opcionesDist.indexOf(prefs.getString("ind_dist_abajo", "Total km")).coerceAtLeast(0))
 
-        // --- Botones permisos ---
+        // --- Permisos ---
         findViewById<Button>(R.id.btnOverlay).setOnClickListener {
-            startActivity(
-                Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                Uri.parse("package:$packageName"))
-            )
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")))
         }
         findViewById<Button>(R.id.btnAccessibility).setOnClickListener {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
@@ -98,7 +91,6 @@ class MainActivity : AppCompatActivity() {
                 .putString("ind_tiempo_arriba", spinTiempoArriba.selectedItem.toString())
                 .putString("ind_tiempo_centro", spinTiempoCentro.selectedItem.toString())
                 .putString("ind_tiempo_abajo",  spinTiempoAbajo.selectedItem.toString())
-                .putString("ind_dist_arriba",   spinDistArriba.selectedItem.toString())
                 .putString("ind_dist_centro",   spinDistCentro.selectedItem.toString())
                 .putString("ind_dist_abajo",    spinDistAbajo.selectedItem.toString())
                 .apply()
